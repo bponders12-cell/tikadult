@@ -1,0 +1,171 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  viewer
+  creator
+  admin
+  staff
+}
+
+enum FeedLayout {
+  immersive
+  side
+}
+
+enum MediaStatus {
+  draft
+  processing
+  live
+  flagged
+  removed
+}
+
+enum ReportStatus {
+  open
+  in_review
+  resolved
+  dismissed
+}
+
+enum EntitlementType {
+  monthly
+  yearly
+  one_time
+  per_video
+}
+
+enum EntitlementStatus {
+  active
+  expired
+  revoked
+}
+
+enum TransactionStatus {
+  pending
+  completed
+  failed
+  refunded
+}
+
+model User {
+  id             String        @id @default(cuid())
+  email          String        @unique
+  handle         String        @unique
+  passwordHash   String?
+  authRef        String?
+  role           Role          @default(viewer)
+  ageConfirmedAt DateTime?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  settings       UserSettings?
+  profile        Profile?
+  media          Media[]       @relation("UserMedia")
+  reportsFiled   Report[]      @relation("ReportsFiled")
+  reportsTarget  Report[]      @relation("ReportsTarget")
+  entitlements   Entitlement[]
+  transactions   Transaction[]
+}
+
+model Category {
+  id        String  @id @default(cuid())
+  slug      String  @unique
+  name      String
+  sortOrder Int     @default(0)
+  active    Boolean @default(true)
+
+  media     Media[]
+}
+
+model UserSettings {
+  id              String     @id @default(cuid())
+  userId          String     @unique
+  user            User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  feedLayout      FeedLayout @default(immersive)
+  /// User-configurable privacy preferences (extensible). Defaults documented in src/lib/settings.ts and seed/docs.
+  privacyPrefs    Json       @default("{}")
+  /// User-configurable messaging preferences (extensible). Defaults documented in src/lib/settings.ts and seed/docs.
+  messagingPrefs  Json       @default("{}")
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+}
+
+/// Placeholder for future profile expansion (follow-on plans).
+model Profile {
+  id          String   @id @default(cuid())
+  userId      String   @unique
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  displayName String?
+  bio         String?
+  avatarUrl   String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+/// Placeholder for future media pipeline/upload-to-live (follow-on plans).
+model Media {
+  id          String      @id @default(cuid())
+  ownerId     String
+  owner       User        @relation("UserMedia", fields: [ownerId], references: [id], onDelete: Cascade)
+  categoryId  String?
+  category    Category?   @relation(fields: [categoryId], references: [id])
+  title       String?
+  status      MediaStatus @default(draft)
+  durationSec Int?
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  entitlements Entitlement[]
+}
+
+/// Placeholder for future moderation/reporting/flags (follow-on plans).
+model Report {
+  id          String       @id @default(cuid())
+  reporterId  String?
+  reporter    User?        @relation("ReportsFiled", fields: [reporterId], references: [id], onDelete: SetNull)
+  targetUserId String?
+  targetUser  User?        @relation("ReportsTarget", fields: [targetUserId], references: [id], onDelete: SetNull)
+  status      ReportStatus @default(open)
+  reason      String?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+}
+
+/// Placeholder for future paid access/entitlements (follow-on plans).
+model Entitlement {
+  id          String            @id @default(cuid())
+  userId      String
+  user        User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  mediaId     String?
+  media       Media?            @relation(fields: [mediaId], references: [id], onDelete: SetNull)
+  type        EntitlementType   @default(one_time)
+  status      EntitlementStatus @default(active)
+  startsAt    DateTime          @default(now())
+  endsAt      DateTime?
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+
+  transaction Transaction?
+}
+
+/// Placeholder for future money flow/purchases/payouts (follow-on plans).
+model Transaction {
+  id            String            @id @default(cuid())
+  userId        String
+  user          User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  entitlementId String?           @unique
+  entitlement   Entitlement?      @relation(fields: [entitlementId], references: [id], onDelete: SetNull)
+  amountCents   Int               @default(0)
+  currency      String            @default("USD")
+  status        TransactionStatus @default(pending)
+  providerRef   String?
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+}
