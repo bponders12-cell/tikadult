@@ -11,8 +11,11 @@ import {
 
 /**
  * Turns verified provider events into transaction status changes and entitlement grants/revocations.
- * Lifecycle: pending -> completed | failed; failed -> completed; completed -> refunded | chargeback.
- * Anything else (duplicate, out-of-order, unknown reference) is a no-op, never an error.
+ * Lifecycle: pending -> completed | failed; failed -> completed; completed -> refunded | chargeback;
+ * pending | failed -> refunded | chargeback (a reversal delivered before its completion: providers do
+ * not guarantee event order, so the reversal is applied at once as a terminal state, and the late
+ * completion is then refused, so no access is ever granted for money that was returned).
+ * Anything else (duplicate, disallowed transition, unknown reference) is a no-op, never an error.
  */
 
 export type ReconcileResult = SettlementResult;
@@ -49,9 +52,12 @@ export function planSettlement(
     case "payment.failed":
       return tx.status === "pending" ? { to: "failed", from: "pending" } : null;
     case "payment.refunded":
-      return tx.status === "completed" ? { to: "refunded", from: "completed" } : null;
-    case "payment.chargeback":
-      return tx.status === "completed" ? { to: "chargeback", from: "completed" } : null;
+    case "payment.chargeback": {
+      const to = type === "payment.refunded" ? "refunded" : "chargeback";
+      return tx.status === "completed" || tx.status === "pending" || tx.status === "failed"
+        ? { to, from: tx.status }
+        : null;
+    }
   }
 }
 

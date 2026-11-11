@@ -14,8 +14,8 @@ const STATUS_TEXT: Record<TransactionStatus, string> = {
   pending: "Your payment is being processed. This page shows the latest status when you reload it.",
   completed: "Payment complete. Your access is active.",
   failed: "The payment failed. You have not been charged; you can try again.",
-  refunded: "This payment was refunded and the access it granted has been removed.",
-  chargeback: "This payment was disputed and the access it granted has been removed.",
+  refunded: "This payment was refunded, so it gives no access (any access it granted has been removed).",
+  chargeback: "This payment was disputed, so it gives no access (any access it granted has been removed).",
 };
 
 export default async function CheckoutResultPage({ searchParams }: { searchParams: Search }) {

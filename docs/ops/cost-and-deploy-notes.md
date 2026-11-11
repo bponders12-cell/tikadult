@@ -143,11 +143,14 @@ Since no real provider exists yet, **payments are off in any production deploy**
   - `pending` → `completed` or `failed`
   - `failed` → `completed`
   - `completed` → `refunded` or `chargeback`
+  - `pending` or `failed` → `refunded` or `chargeback` — a refund/chargeback that arrives before its
+    "completed" event (providers do not guarantee order). The transaction ends refunded/charged back
+    with no access; the late "completed" event is then ignored, so no access is granted for returned money.
 - `completed` grants exactly one entitlement.
 - `refunded` and `chargeback` set that entitlement to `revoked`, so access stops immediately.
 - Any other event is a no-op:
   - duplicate (de-duplicated per provider + event id);
-  - out of order;
+  - any other transition (for example "completed" after a refund, or "failed" after "completed");
   - unknown reference — the webhook answers 404 so the provider retries.
 - **Refunds can only be received, not started from the app.**
 - A reversal of earnings already marked paid keeps `payoutStatus: "paid"`. `/admin/money` reports it as "already paid out to creators". Nothing is recovered automatically.

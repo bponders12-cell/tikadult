@@ -117,21 +117,67 @@ describe("applyPaymentEvent", () => {
 
   it("an ignored event is still recorded as seen (its replay is a duplicate)", async () => {
     const { ref } = await pendingTx();
-    expect(await apply("payment.refunded", ref, T0, "evt-early-refund")).toBe("ignored");
-    expect(await apply("payment.refunded", ref, T0, "evt-early-refund")).toBe("duplicate");
+    await apply("payment.completed", ref);
+    expect(await apply("payment.failed", ref, T0, "evt-late-failure")).toBe("ignored");
+    expect(await apply("payment.failed", ref, T0, "evt-late-failure")).toBe("duplicate");
   });
 
   it("rejects transitions the lifecycle does not allow", async () => {
     const { tx, ref } = await pendingTx();
-    expect(await apply("payment.refunded", ref)).toBe("ignored"); // pending -> refunded
-    expect(await apply("payment.chargeback", ref)).toBe("ignored"); // pending -> chargeback
     await apply("payment.completed", ref);
     expect(await apply("payment.failed", ref)).toBe("ignored"); // completed -> failed
     await apply("payment.refunded", ref);
     expect(await apply("payment.completed", ref)).toBe("ignored"); // refunded -> completed
     expect(await apply("payment.chargeback", ref)).toBe("ignored"); // refunded -> chargeback
+    expect(await apply("payment.refunded", ref)).toBe("ignored"); // refunded -> refunded
     expect((await getTransaction(tx.id))!.status).toBe("refunded");
     expect(await listEntitlementsForUser("buyer")).toHaveLength(1);
+  });
+
+  describe("reversal delivered before completion (out-of-order events)", () => {
+    it.each([
+      ["payment.refunded", "refunded"],
+      ["payment.chargeback", "chargeback"],
+    ] as const)("%s while pending settles it terminally; the later completed event grants nothing", async (type, status) => {
+      const { tx, ref } = await pendingTx({ accessType: "one_time" });
+      expect(await apply(type, ref)).toBe("applied");
+      expect(await getTransaction(tx.id)).toMatchObject({ status, completedAt: null, entitlementId: null, ...MONEY });
+
+      expect(await apply("payment.completed", ref)).toBe("ignored");
+      const after = await getTransaction(tx.id);
+      expect(after).toMatchObject({ status, completedAt: null, entitlementId: null });
+      expect(await listEntitlementsForUser("buyer")).toEqual([]);
+    });
+
+    it.each([
+      ["payment.refunded", "refunded"],
+      ["payment.chargeback", "chargeback"],
+    ] as const)("%s after a failed attempt settles it terminally; a later completed grants nothing", async (type, status) => {
+      const { tx, ref } = await pendingTx({ accessType: "monthly" });
+      await apply("payment.failed", ref);
+      expect(await apply(type, ref)).toBe("applied");
+      expect(await apply("payment.completed", ref)).toBe("ignored");
+      expect((await getTransaction(tx.id))!.status).toBe(status);
+      expect(await listEntitlementsForUser("buyer")).toEqual([]);
+    });
+
+    it("the early reversal does not touch the buyer's other grants", async () => {
+      const other = await pendingTx({ accessType: "per_video", mediaId: "m9" });
+      await apply("payment.completed", other.ref);
+      const { ref } = await pendingTx({ accessType: "one_time" });
+      await apply("payment.refunded", ref);
+      await apply("payment.completed", ref);
+      expect((await listEntitlementsForUser("buyer")).map((g) => [g.type, g.status])).toEqual([
+        ["per_video", "active"],
+      ]);
+    });
+
+    it("a reversed-before-completion transaction is never counted as paid-out or completed", async () => {
+      const { tx, ref } = await pendingTx({ accessType: "one_time" });
+      await apply("payment.chargeback", ref);
+      await apply("payment.completed", ref);
+      expect(await getTransaction(tx.id)).toMatchObject({ status: "chargeback", payoutStatus: "unpaid" });
+    });
   });
 
   it("failed -> failed is ignored", async () => {

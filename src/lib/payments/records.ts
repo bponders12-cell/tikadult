@@ -552,7 +552,9 @@ export type SettlementEvent = { provider: string; eventId: string; type: string;
 export type SettlementPlan =
   | { to: "completed"; from: "pending" | "failed"; completedAt: Date; grant: CreateEntitlementInput | null }
   | { to: "failed"; from: "pending" }
-  | { to: "refunded" | "chargeback"; from: "completed" };
+  /** From `completed`: revokes the linked grant. From `pending`/`failed` (reversal delivered before its
+   * completion): terminal without any grant, so the late completion is refused. */
+  | { to: "refunded" | "chargeback"; from: "completed" | "pending" | "failed" };
 
 /**
  * Decides the transition for the transaction as currently stored. `creatorGrants` are the buyer's
