@@ -19,3 +19,5 @@ playwright-report/
 test-results/
 prisma/dev.db
 prisma/dev.db-journal
+# local media storage (dev)
+.storage/

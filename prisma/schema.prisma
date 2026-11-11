@@ -27,6 +27,30 @@ enum MediaStatus {
   removed
 }
 
+enum MediaType {
+  video
+  image
+}
+
+enum MediaVisibility {
+  public
+  private
+  restricted
+}
+
+enum ProcessingStatus {
+  pending
+  processing
+  ready
+  failed
+}
+
+enum MediaAssetKind {
+  original
+  web
+  thumbnail
+}
+
 enum ReportStatus {
   open
   in_review
@@ -55,23 +79,23 @@ enum TransactionStatus {
 }
 
 model User {
-  id             String        @id @default(cuid())
-  email          String        @unique
-  handle         String        @unique
+  id             String    @id @default(cuid())
+  email          String    @unique
+  handle         String    @unique
   passwordHash   String?
   authRef        String?
-  role           Role          @default(viewer)
+  role           Role      @default(viewer)
   ageConfirmedAt DateTime?
-  createdAt      DateTime      @default(now())
-  updatedAt      DateTime      @updatedAt
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
 
-  settings       UserSettings?
-  profile        Profile?
-  media          Media[]       @relation("UserMedia")
-  reportsFiled   Report[]      @relation("ReportsFiled")
-  reportsTarget  Report[]      @relation("ReportsTarget")
-  entitlements   Entitlement[]
-  transactions   Transaction[]
+  settings      UserSettings?
+  profile       Profile?
+  media         Media[]       @relation("UserMedia")
+  reportsFiled  Report[]      @relation("ReportsFiled")
+  reportsTarget Report[]      @relation("ReportsTarget")
+  entitlements  Entitlement[]
+  transactions  Transaction[]
 }
 
 model Category {
@@ -81,20 +105,20 @@ model Category {
   sortOrder Int     @default(0)
   active    Boolean @default(true)
 
-  media     Media[]
+  media Media[]
 }
 
 model UserSettings {
-  id              String     @id @default(cuid())
-  userId          String     @unique
-  user            User       @relation(fields: [userId], references: [id], onDelete: Cascade)
-  feedLayout      FeedLayout @default(immersive)
+  id             String     @id @default(cuid())
+  userId         String     @unique
+  user           User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  feedLayout     FeedLayout @default(immersive)
   /// User-configurable privacy preferences (extensible). Defaults documented in src/lib/settings.ts and seed/docs.
-  privacyPrefs    Json       @default("{}")
+  privacyPrefs   Json       @default("{}")
   /// User-configurable messaging preferences (extensible). Defaults documented in src/lib/settings.ts and seed/docs.
-  messagingPrefs  Json       @default("{}")
-  createdAt       DateTime   @default(now())
-  updatedAt       DateTime   @updatedAt
+  messagingPrefs Json       @default("{}")
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
 }
 
 /// Placeholder for future profile expansion (follow-on plans).
@@ -109,48 +133,83 @@ model Profile {
   updatedAt   DateTime @updatedAt
 }
 
-/// Placeholder for future media pipeline/upload-to-live (follow-on plans).
+/// Creator-uploaded video/image. `status` is the publish/flag lifecycle;
+/// `processingStatus` tracks the checks/transcode pipeline.
 model Media {
-  id          String      @id @default(cuid())
-  ownerId     String
-  owner       User        @relation("UserMedia", fields: [ownerId], references: [id], onDelete: Cascade)
-  categoryId  String?
-  category    Category?   @relation(fields: [categoryId], references: [id])
-  title       String?
-  status      MediaStatus @default(draft)
-  durationSec Int?
-  createdAt   DateTime    @default(now())
-  updatedAt   DateTime    @updatedAt
+  id               String           @id @default(cuid())
+  ownerId          String
+  owner            User             @relation("UserMedia", fields: [ownerId], references: [id], onDelete: Cascade)
+  categoryId       String?
+  category         Category?        @relation(fields: [categoryId], references: [id])
+  title            String?
+  type             MediaType        @default(video)
+  visibility       MediaVisibility  @default(public)
+  /// Null = free. Price in cents to unlock (per-video access).
+  unlockPriceCents Int?
+  status           MediaStatus      @default(draft)
+  processingStatus ProcessingStatus @default(pending)
+  processingError  String?
+  flagReason       String?
+  flaggedAt        DateTime?
+  publishedAt      DateTime?
+  durationSec      Int?
+  /// Size of the original upload in bytes.
+  sizeBytes        Int?
+  /// MIME type / container format of the original (e.g. video/mp4).
+  format           String?
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
 
+  assets       MediaAsset[]
   entitlements Entitlement[]
+
+  @@index([ownerId])
+  @@index([status, visibility])
+}
+
+/// A stored file for a Media: original upload, web-optimised variant, or thumbnail.
+model MediaAsset {
+  id          String         @id @default(cuid())
+  mediaId     String
+  media       Media          @relation(fields: [mediaId], references: [id], onDelete: Cascade)
+  kind        MediaAssetKind
+  /// Key within the StorageAdapter (see src/lib/media/storage.ts).
+  storageKey  String
+  contentType String
+  sizeBytes   Int?
+  width       Int?
+  height      Int?
+  createdAt   DateTime       @default(now())
+
+  @@unique([mediaId, kind])
 }
 
 /// Placeholder for future moderation/reporting/flags (follow-on plans).
 model Report {
-  id          String       @id @default(cuid())
-  reporterId  String?
-  reporter    User?        @relation("ReportsFiled", fields: [reporterId], references: [id], onDelete: SetNull)
+  id           String       @id @default(cuid())
+  reporterId   String?
+  reporter     User?        @relation("ReportsFiled", fields: [reporterId], references: [id], onDelete: SetNull)
   targetUserId String?
-  targetUser  User?        @relation("ReportsTarget", fields: [targetUserId], references: [id], onDelete: SetNull)
-  status      ReportStatus @default(open)
-  reason      String?
-  createdAt   DateTime     @default(now())
-  updatedAt   DateTime     @updatedAt
+  targetUser   User?        @relation("ReportsTarget", fields: [targetUserId], references: [id], onDelete: SetNull)
+  status       ReportStatus @default(open)
+  reason       String?
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
 }
 
 /// Placeholder for future paid access/entitlements (follow-on plans).
 model Entitlement {
-  id          String            @id @default(cuid())
-  userId      String
-  user        User              @relation(fields: [userId], references: [id], onDelete: Cascade)
-  mediaId     String?
-  media       Media?            @relation(fields: [mediaId], references: [id], onDelete: SetNull)
-  type        EntitlementType   @default(one_time)
-  status      EntitlementStatus @default(active)
-  startsAt    DateTime          @default(now())
-  endsAt      DateTime?
-  createdAt   DateTime          @default(now())
-  updatedAt   DateTime          @updatedAt
+  id        String            @id @default(cuid())
+  userId    String
+  user      User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  mediaId   String?
+  media     Media?            @relation(fields: [mediaId], references: [id], onDelete: SetNull)
+  type      EntitlementType   @default(one_time)
+  status    EntitlementStatus @default(active)
+  startsAt  DateTime          @default(now())
+  endsAt    DateTime?
+  createdAt DateTime          @default(now())
+  updatedAt DateTime          @updatedAt
 
   transaction Transaction?
 }
