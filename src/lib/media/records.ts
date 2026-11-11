@@ -121,7 +121,7 @@ function fromRow(row: NonNullable<PrismaMediaRow>): MediaRecord {
     flaggedAt: row.flaggedAt,
     publishedAt: row.publishedAt,
     durationSec: row.durationSec,
-    sizeBytes: row.sizeBytes,
+    sizeBytes: row.sizeBytes === null ? null : Number(row.sizeBytes),
     format: row.format,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
@@ -280,6 +280,30 @@ export async function listPendingMedia(): Promise<MediaRecord[]> {
     .map(clone);
 }
 
+/**
+ * Items stuck mid-processing (status=processing, processingStatus=processing)
+ * whose last change is before `cutoff`: the worker died after claiming them.
+ */
+export async function listStaleProcessing(cutoff: Date): Promise<MediaRecord[]> {
+  if (dbAvailable()) {
+    const rows = await prisma.media.findMany({
+      where: { status: "processing", processingStatus: "processing", updatedAt: { lt: cutoff } },
+      orderBy: { updatedAt: "asc" },
+      include,
+    });
+    return rows.map(fromRow);
+  }
+  return [...memoryMedia.values()]
+    .filter(
+      (m) =>
+        m.status === "processing" &&
+        m.processingStatus === "processing" &&
+        m.updatedAt.getTime() < cutoff.getTime(),
+    )
+    .sort((a, b) => a.updatedAt.getTime() - b.updatedAt.getTime())
+    .map(clone);
+}
+
 export async function updateMedia(id: string, patch: UpdateMediaPatch): Promise<MediaRecord | null> {
   if (dbAvailable()) {
     const { categorySlug, ...rest } = patch;
@@ -372,7 +396,8 @@ export async function getStorageUsage(ownerId?: string): Promise<StorageUsage> {
     ]);
     return {
       count: live._count._all,
-      bytes: (live._sum.sizeBytes ?? 0) + (removed?._sum?.sizeBytes ?? 0),
+      // _sum is BigInt (Media.sizeBytes); the public API stays number (safe below 2^53).
+      bytes: Number(live._sum.sizeBytes ?? 0) + Number(removed?._sum?.sizeBytes ?? 0),
     };
   }
   let count = 0;

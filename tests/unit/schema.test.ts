@@ -30,6 +30,8 @@ describe("media schema", () => {
       expect(media).toContain(f);
     }
     expect(media).toMatch(/status\s+MediaStatus/);
+    // 32-bit Int would overflow Postgres SUM() aggregates (quota totals) past 2 GB.
+    expect(media).toMatch(/sizeBytes\s+BigInt\?/);
   });
 
   it("defines media enums", () => {

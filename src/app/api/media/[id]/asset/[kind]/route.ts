@@ -1,3 +1,4 @@
+import { isAgeConfirmedFromCookieHeader } from "@/lib/age-gate";
 import { getSession } from "@/lib/auth";
 import { canFetchAsset, isDeliverableKind, isPubliclyVisible, parseRange } from "@/lib/media/delivery";
 import { getMedia } from "@/lib/media/records";
@@ -20,6 +21,8 @@ export async function GET(request: Request, { params }: Ctx) {
   const media = await getMedia(id);
   if (!media) return notFound();
   const userId = (await getSession())?.user?.id ?? null;
+  // 18+ gate: adult bytes need the age-confirmation cookie or a signed-in session.
+  if (!userId && !isAgeConfirmedFromCookieHeader(request.headers.get("cookie"))) return notFound();
   if (!canFetchAsset(media, userId)) return notFound();
 
   const asset = media.assets.find((a) => a.kind === kind);
@@ -31,8 +34,12 @@ export async function GET(request: Request, { params }: Ctx) {
   const headers: Record<string, string> = {
     "Content-Type": asset.contentType,
     "Accept-Ranges": "bytes",
-    // Only public+live bytes may be shared-cached; owner previews of other states never.
-    "Cache-Control": isPubliclyVisible(media) ? "public, max-age=3600" : "private, no-store",
+    // Access now depends on a cookie/session, so a shared cache must never replay
+    // bytes to a viewer who has not passed the gate: `private` keeps them in the
+    // browser cache only. `Vary: Cookie` alone would still let a shared cache store
+    // a gated response and fragment per-cookie. Non-public states are never cached.
+    "Cache-Control": isPubliclyVisible(media) ? "private, max-age=3600" : "private, no-store",
+    Vary: "Cookie",
     "X-Content-Type-Options": "nosniff",
   };
 

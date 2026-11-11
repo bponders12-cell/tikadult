@@ -12,6 +12,7 @@ import {
   listPendingMedia,
   resetMemoryMedia,
   setMediaAsset,
+  setMemoryTimestamps,
   updateMedia,
 } from "@/lib/media/records";
 import { getStorage } from "@/lib/media/storage";
@@ -292,7 +293,7 @@ describe("media worker (standalone run over pending items)", () => {
 
     expect(await listPendingMedia()).toHaveLength(5);
     const summary = await runPendingMedia();
-    expect(summary).toEqual({ processed: 5, live: 2, flagged: 1, failed: 2, skipped: 0 });
+    expect(summary).toEqual({ processed: 5, live: 2, flagged: 1, failed: 2, skipped: 0, reclaimed: 0 });
 
     expect((await getMedia(good))!.status).toBe("live");
     expect((await getMedia(tooLong))!.processingStatus).toBe("failed");
@@ -302,7 +303,7 @@ describe("media worker (standalone run over pending items)", () => {
     expect((await getMedia(draft.id))!.status).toBe("draft"); // untouched
     expect(await listPendingMedia()).toHaveLength(0);
 
-    expect(await runPendingMedia()).toEqual({ processed: 0, live: 0, flagged: 0, failed: 0, skipped: 0 });
+    expect(await runPendingMedia()).toEqual({ processed: 0, live: 0, flagged: 0, failed: 0, skipped: 0, reclaimed: 0 });
   });
 
   it("one crashing item does not stop the rest", async () => {
@@ -319,5 +320,37 @@ describe("media worker (standalone run over pending items)", () => {
     expect(summary).toMatchObject({ processed: 2, live: 1, failed: 1 });
     expect((await getMedia(a))!.processingStatus).toBe("failed");
     expect((await getMedia(b))!.status).toBe("live");
+  });
+});
+
+describe("media worker: stale processing reclaim", () => {
+  const now = new Date("2026-01-01T12:00:00Z");
+  const ago = (min: number) => new Date(now.getTime() - min * 60_000);
+  const mk = async (status: "processing" | "live", ps: "processing" | "ready", at: Date) => {
+    const m = await createMedia({ ownerId: "u1", type: "video", visibility: "public" });
+    await updateMedia(m.id, { status, processingStatus: ps });
+    setMemoryTimestamps(m.id, at);
+    return m.id;
+  };
+
+  it("fails stale processing items, leaves fresh and live ones alone", async () => {
+    const stale = await mk("processing", "processing", ago(16));
+    const fresh = await mk("processing", "processing", ago(5));
+    const live = await mk("live", "ready", ago(600));
+    const summary = await runPendingMedia({ now });
+    expect(summary.reclaimed).toBe(1);
+    expect(await getMedia(stale)).toMatchObject({
+      status: "draft",
+      processingStatus: "failed",
+      processingError: "processing interrupted — please retry",
+    });
+    expect(await getMedia(fresh)).toMatchObject({ status: "processing", processingStatus: "processing" });
+    expect(await getMedia(live)).toMatchObject({ status: "live", processingStatus: "ready" });
+  });
+
+  it("honors MEDIA_PROCESSING_STALE_MINUTES", async () => {
+    const id = await mk("processing", "processing", ago(5));
+    expect((await runPendingMedia({ now, env: { MEDIA_PROCESSING_STALE_MINUTES: "3" } })).reclaimed).toBe(1);
+    expect((await getMedia(id))?.processingStatus).toBe("failed");
   });
 });

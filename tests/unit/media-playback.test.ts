@@ -23,10 +23,11 @@ import { parseRange } from "@/lib/media/delivery";
 
 const BYTES = Uint8Array.from({ length: 100 }, (_, i) => i);
 const ctx = (id: string, kind: string) => ({ params: Promise.resolve({ id, kind }) });
-const get = (id: string, kind: string, range?: string) =>
+const AGE = { cookie: "age_confirmed=1" };
+const get = (id: string, kind: string, range?: string, headers: Record<string, string> = AGE) =>
   deliver(
     new Request(`http://x/api/media/${id}/asset/${kind}`, {
-      headers: range ? { range } : {},
+      headers: { ...headers, ...(range ? { range } : {}) },
     }),
     ctx(id, kind),
   );
@@ -98,6 +99,26 @@ describe("parseRange", () => {
 });
 
 describe("asset delivery route", () => {
+  it("404s anonymous callers without the age cookie, even for public+live", async () => {
+    const m = await seed();
+    expect((await get(m.id, "web", undefined, {})).status).toBe(404);
+    expect((await get(m.id, "web", undefined, { cookie: "age_confirmed=0" })).status).toBe(404);
+  });
+
+  it("serves anonymous callers with the age cookie, with non-shared-cacheable headers", async () => {
+    const m = await seed();
+    const res = await get(m.id, "web");
+    expect(res.status).toBe(200);
+    expect(res.headers.get("cache-control")).toBe("private, max-age=3600");
+    expect(res.headers.get("vary")).toBe("Cookie");
+  });
+
+  it("owner session works without the age cookie", async () => {
+    const m = await seed({ live: false });
+    as("owner1");
+    expect((await get(m.id, "web", undefined, {})).status).toBe(200);
+  });
+
   it("serves 200 with full bytes, content-type, length and Accept-Ranges", async () => {
     const m = await seed();
     const res = await get(m.id, "web");

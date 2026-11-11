@@ -70,3 +70,10 @@ export function lifecycleWindows(env: Env = process.env) {
     removedRetentionMs: positiveInt(env.MEDIA_REMOVED_RETENTION_DAYS, DEFAULT_REMOVED_RETENTION_DAYS) * 86_400_000,
   };
 }
+
+/** Items claimed for processing but untouched this long are presumed orphaned (worker died). */
+export const DEFAULT_PROCESSING_STALE_MINUTES = 15;
+
+export function processingStaleMs(env: Env = process.env): number {
+  return positiveInt(env.MEDIA_PROCESSING_STALE_MINUTES, DEFAULT_PROCESSING_STALE_MINUTES) * 60_000;
+}

@@ -23,6 +23,7 @@ enum MediaStatus {
   draft
   processing
   live
+  /// Currently unused: flagged-but-live items use status=live plus flagReason/flaggedAt.
   flagged
   removed
 }
@@ -153,8 +154,9 @@ model Media {
   flaggedAt        DateTime?
   publishedAt      DateTime?
   durationSec      Int?
-  /// Size of the original upload in bytes.
-  sizeBytes        Int?
+  /// Size of the original upload in bytes. BigInt so site-wide SUM() aggregates
+  /// (quota checks) cannot overflow 32 bits; the records layer maps it to number.
+  sizeBytes        BigInt?
   /// MIME type / container format of the original (e.g. video/mp4).
   format           String?
   createdAt        DateTime         @default(now())

@@ -47,22 +47,24 @@ export async function PUT(request: Request, { params }: IdContext) {
     return jsonError("Content-Type does not match the declared format", 415);
   }
 
-  const cap = maxUploadBytes(type);
+  // The declared size (what init's quota check counted) bounds the read, so a
+  // lying client never makes us buffer more than it declared.
+  const globalCap = maxUploadBytes(type);
+  const cap = Math.min(globalCap, media.sizeBytes ?? globalCap);
+  const overMessage = () =>
+    cap < globalCap
+      ? `Upload is larger than the declared size of ${cap} bytes`
+      : `File exceeds the ${globalCap} byte limit`;
   const headerLength = Number(request.headers.get("content-length"));
   if (Number.isFinite(headerLength) && headerLength > cap) {
-    return jsonError(`File exceeds the ${cap} byte limit`, 413);
+    return jsonError(overMessage(), 413);
   }
 
   // Stream with a running counter so a missing/lying content-length (chunked
   // transfer) can never buffer more than `cap` bytes.
   const bytes = await readCapped(request, cap);
-  if (bytes === null) return jsonError(`File exceeds the ${cap} byte limit`, 413);
+  if (bytes === null) return jsonError(overMessage(), 413);
   if (bytes.byteLength === 0) return jsonError("Empty upload", 400);
-  // The declared size is what the init quota check counted, so it must bound the
-  // real upload. Rejected before anything is stored; the draft stays retryable.
-  if (media.sizeBytes !== null && bytes.byteLength > media.sizeBytes) {
-    return jsonError(`Upload is larger than the declared size of ${media.sizeBytes} bytes`, 413);
-  }
 
   const ext = ALLOWED_FORMATS[type][declared];
   const storageKey = `media/${userId}/${media.id}/original.${ext}`;

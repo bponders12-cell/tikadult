@@ -51,7 +51,8 @@ export async function runMediaCleanup(deps: CleanupDeps = {}): Promise<CleanupSu
       await deleteBytes(storage, draft);
       await deleteMedia(draft.id);
       summary.draftsDeleted++;
-    } catch {
+    } catch (e) {
+      console.warn(`media-cleanup: draft ${draft.id} failed: ${e instanceof Error ? e.message : String(e)}`);
       summary.errors++;
     }
   }
@@ -62,7 +63,8 @@ export async function runMediaCleanup(deps: CleanupDeps = {}): Promise<CleanupSu
       await deleteBytes(storage, removed);
       await clearMediaAssets(removed.id);
       summary.removedPurged++;
-    } catch {
+    } catch (e) {
+      console.warn(`media-cleanup: removed ${removed.id} failed: ${e instanceof Error ? e.message : String(e)}`);
       summary.errors++;
     }
   }
