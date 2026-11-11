@@ -350,20 +350,39 @@ export async function deleteMedia(id: string): Promise<boolean> {
 
 export type StorageUsage = { count: number; bytes: number };
 
-/** Counts/sums every non-removed item (drafts included) for quota checks. `ownerId` omitted = global. */
+/**
+ * Usage for quota checks. `count` = non-removed items (drafts included).
+ * `bytes` = non-removed items PLUS removed items whose asset rows still exist
+ * (their stored bytes remain until the retention purge clears the rows), so the
+ * caps reflect what is really in storage. `ownerId` omitted = global.
+ */
 export async function getStorageUsage(ownerId?: string): Promise<StorageUsage> {
   if (dbAvailable()) {
-    const agg = await prisma.media.aggregate({
-      where: { status: { not: "removed" }, ...(ownerId ? { ownerId } : {}) },
-      _count: { _all: true },
-      _sum: { sizeBytes: true },
-    });
-    return { count: agg._count._all, bytes: agg._sum.sizeBytes ?? 0 };
+    const owner = ownerId ? { ownerId } : {};
+    const [live, removed] = await Promise.all([
+      prisma.media.aggregate({
+        where: { status: { not: "removed" }, ...owner },
+        _count: { _all: true },
+        _sum: { sizeBytes: true },
+      }),
+      prisma.media.aggregate({
+        where: { status: "removed", assets: { some: {} }, ...owner },
+        _sum: { sizeBytes: true },
+      }),
+    ]);
+    return {
+      count: live._count._all,
+      bytes: (live._sum.sizeBytes ?? 0) + (removed?._sum?.sizeBytes ?? 0),
+    };
   }
   let count = 0;
   let bytes = 0;
   for (const m of memoryMedia.values()) {
-    if (m.status === "removed" || (ownerId && m.ownerId !== ownerId)) continue;
+    if (ownerId && m.ownerId !== ownerId) continue;
+    if (m.status === "removed") {
+      if (m.assets.length > 0) bytes += m.sizeBytes ?? 0;
+      continue;
+    }
     count++;
     bytes += m.sizeBytes ?? 0;
   }

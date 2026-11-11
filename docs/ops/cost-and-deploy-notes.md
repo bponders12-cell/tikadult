@@ -44,7 +44,7 @@
 | `MEDIA_DRAFT_TTL_HOURS` | 24 | Abandoned drafts older than this are deleted with their bytes | cleanup runner |
 | `MEDIA_REMOVED_RETENTION_DAYS` | 30 | Bytes of `removed` media are deleted after this; record kept as tombstone | cleanup runner |
 
-Defaults are sized for the budget: 50 GB of object storage is roughly $1-2/month at typical S3-compatible prices, leaving room; 2 GB/user (about 7 max-size videos) stops a single account consuming a material share. Invalid or non-positive env values fall back to the default. Quota checks run at init using declared `sizeBytes`; the PUT still enforces the real per-file cap. Concurrent inits can overshoot by a request or two (no transaction); acceptable at this scale.
+Defaults are sized for the budget: 50 GB of object storage is roughly $1-2/month at typical S3-compatible prices, leaving room; 2 GB/user (about 7 max-size videos) stops a single account consuming a material share. Invalid or non-positive env values fall back to the default. Quota checks run at init using declared `sizeBytes`; the PUT rejects (413) any body larger than the declared size, so the declaration truly bounds the upload. Removed items keep counting toward the bytes quotas until the retention purge clears their asset rows. Concurrent inits can overshoot by a request or two (no transaction); acceptable at this scale.
 
 `runMediaCleanup()` (`src/workers/media-cleanup.ts`) is an importable runner, not a scheduler: wire it to a cron-triggered route or admin action alongside `runPendingMedia()`. Bytes are deleted before rows so failures retry on the next run.
 

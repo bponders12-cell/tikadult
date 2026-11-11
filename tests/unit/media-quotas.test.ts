@@ -9,7 +9,15 @@ vi.mock("@/lib/media/processing", () => ({ enqueueMediaProcessing: async () => {
 
 import { POST as init } from "@/app/api/media/route";
 import { checkUploadQuota, quotaLimits } from "@/lib/media/quotas";
-import { createMedia, resetMemoryMedia, updateMedia } from "@/lib/media/records";
+import {
+  clearMediaAssets,
+  createMedia,
+  getMedia,
+  getStorageUsage,
+  resetMemoryMedia,
+  setMediaAsset,
+  updateMedia,
+} from "@/lib/media/records";
 import { getStorage, LocalStorageAdapter } from "@/lib/media/storage";
 
 const MB = 1024 * 1024;
@@ -125,5 +133,42 @@ describe("getStorage in production", () => {
         S3_SECRET_ACCESS_KEY: "s",
       }),
     ).not.toThrow();
+  });
+});
+
+describe("declared size bounds the upload (quota bypass)", () => {
+  it("rejects a PUT larger than the declared size, stores nothing, and stays retryable", async () => {
+    const { PUT } = await import("@/app/api/media/[id]/upload/route");
+    const res = await init(json({ ...initBody, sizeBytes: 4 }));
+    const { media } = await res.json();
+    const put = (bytes: Uint8Array) =>
+      PUT(
+        new Request(`http://x/api/media/${media.id}/upload`, {
+          method: "PUT",
+          headers: { "content-type": "video/mp4" },
+          body: bytes as unknown as BodyInit,
+        }),
+        { params: Promise.resolve({ id: media.id }) },
+      );
+    const tooBig = await put(new Uint8Array(5));
+    expect(tooBig.status).toBe(413);
+    expect(await getStorage().exists(`media/u1/${media.id}/original.mp4`)).toBe(false);
+    expect((await getMedia(media.id))!.assets).toEqual([]);
+    expect((await put(new Uint8Array(4))).status).toBe(200); // retry within the declaration works
+  });
+});
+
+describe("removed media bytes count until purged", () => {
+  it("counts a removed item with assets, not after the purge clears them", async () => {
+    const m = await seed("u1", 500);
+    await setMediaAsset(m.id, { kind: "original", storageKey: "k", contentType: "video/mp4", sizeBytes: 500 });
+    await updateMedia(m.id, { status: "removed" });
+    expect(await getStorageUsage("u1")).toEqual({ count: 0, bytes: 500 });
+    expect(await getStorageUsage()).toEqual({ count: 0, bytes: 500 });
+    const env = { MEDIA_MAX_BYTES_PER_USER: "600" };
+    expect(await checkUploadQuota("u1", 200, env)).toMatchObject({ ok: false, status: 429 });
+    await clearMediaAssets(m.id);
+    expect(await getStorageUsage("u1")).toEqual({ count: 0, bytes: 0 });
+    expect(await checkUploadQuota("u1", 200, env)).toEqual({ ok: true });
   });
 });

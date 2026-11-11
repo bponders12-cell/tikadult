@@ -58,6 +58,11 @@ export async function PUT(request: Request, { params }: IdContext) {
   const bytes = await readCapped(request, cap);
   if (bytes === null) return jsonError(`File exceeds the ${cap} byte limit`, 413);
   if (bytes.byteLength === 0) return jsonError("Empty upload", 400);
+  // The declared size is what the init quota check counted, so it must bound the
+  // real upload. Rejected before anything is stored; the draft stays retryable.
+  if (media.sizeBytes !== null && bytes.byteLength > media.sizeBytes) {
+    return jsonError(`Upload is larger than the declared size of ${media.sizeBytes} bytes`, 413);
+  }
 
   const ext = ALLOWED_FORMATS[type][declared];
   const storageKey = `media/${userId}/${media.id}/original.${ext}`;
