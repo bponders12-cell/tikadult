@@ -1,8 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
 import {
-  AGE_GATE_COOKIE,
-  AGE_GATE_COOKIE_VALUE,
-  AGE_GATE_COOKIE_MAX_AGE,
   isAgeConfirmedFromRequest,
   isAgeGateExemptPath,
   requiresAgeGate,

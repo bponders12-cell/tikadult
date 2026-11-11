@@ -8,7 +8,10 @@ import { getDefaultCategories } from "@/lib/categories";
 import { getSession } from "@/lib/auth";
 import { getUserSettings, resolveFeedLayout } from "@/lib/settings";
 
-type Params = { params: Promise<{ category: string }> };
+type Params = {
+  params: Promise<{ category: string }>;
+  searchParams: Promise<{ layout?: string | string[] }>;
+};
 
 async function getCategory(slug: string) {
   if (process.env.DATABASE_URL) {
@@ -23,22 +26,25 @@ async function getCategory(slug: string) {
   return fallback ? { slug: fallback.slug, name: fallback.name } : null;
 }
 
-export default async function CategoryFeedPage({ params }: Params) {
+export default async function CategoryFeedPage({ params, searchParams }: Params) {
   const { category } = await params;
+  const sp = await searchParams;
   const slug = decodeURIComponent(category).toLowerCase();
   const cat = await getCategory(slug);
   const session = await getSession();
   const canPersist = Boolean(session?.user?.id);
-  const initialLayout = session?.user?.id
+  const baseLayout = session?.user?.id
     ? resolveFeedLayout((await getUserSettings(session.user.id)).feedLayout)
     : resolveFeedLayout(undefined);
+  const layoutParam = Array.isArray(sp.layout) ? sp.layout[0] : sp.layout;
+  const initialLayout = resolveFeedLayout(layoutParam ?? baseLayout);
   const items = getPlaceholderSlides(slug);
 
   if (!cat) {
     return (
       <main style={{ padding: 24, color: "#fff", background: "#0b0b10", minHeight: "100vh" }}>
         <h1>Category not found</h1>
-        <p>The category "{slug}" is not available.</p>
+        <p>The category &quot;{slug}&quot; is not available.</p>
         <Link href="/">Back to categories</Link>
       </main>
     );

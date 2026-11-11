@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/db";
+import { Prisma } from "@prisma/client";
 
 export type FeedLayout = "immersive" | "side";
 
@@ -78,7 +79,15 @@ export function normalizeMessagingPrefs(value: unknown): MessagingPrefs {
 }
 
 export function normalizeSettings(
-  input: Partial<UserSettingsRecord> | null | undefined,
+  input:
+    | {
+        userId?: string;
+        feedLayout?: unknown;
+        privacyPrefs?: unknown;
+        messagingPrefs?: unknown;
+      }
+    | null
+    | undefined,
 ): UserSettingsRecord {
   const d = defaultSettings();
   return {
@@ -132,8 +141,8 @@ export async function getUserSettings(userId: string): Promise<UserSettingsRecor
           data: {
             userId,
             feedLayout: "immersive",
-            privacyPrefs: DEFAULT_PRIVACY_PREFS as any,
-            messagingPrefs: DEFAULT_MESSAGING_PREFS as any,
+            privacyPrefs: DEFAULT_PRIVACY_PREFS as unknown as Prisma.InputJsonValue,
+            messagingPrefs: DEFAULT_MESSAGING_PREFS as unknown as Prisma.InputJsonValue,
           },
         });
         const normalized = normalizeSettings({
@@ -178,14 +187,14 @@ export async function updateUserSettings(
         where: { userId },
         update: {
           feedLayout: next.feedLayout,
-          privacyPrefs: next.privacyPrefs as any,
-          messagingPrefs: next.messagingPrefs as any,
+          privacyPrefs: next.privacyPrefs as unknown as Prisma.InputJsonValue,
+          messagingPrefs: next.messagingPrefs as unknown as Prisma.InputJsonValue,
         },
         create: {
           userId,
           feedLayout: next.feedLayout,
-          privacyPrefs: next.privacyPrefs as any,
-          messagingPrefs: next.messagingPrefs as any,
+          privacyPrefs: next.privacyPrefs as unknown as Prisma.InputJsonValue,
+          messagingPrefs: next.messagingPrefs as unknown as Prisma.InputJsonValue,
         },
       });
       return normalizeSettings({

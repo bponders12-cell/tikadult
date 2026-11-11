@@ -7,7 +7,7 @@ export type FeedLayout = "immersive" | "side";
 type Props = {
   value: FeedLayout;
   onChange?: (layout: FeedLayout) => void;
-  persist?: boolean; // if true, PATCH/PUT /api/settings
+  persist?: boolean; // if true, PUT /api/settings
   className?: string;
 };
 
@@ -20,6 +20,11 @@ export default function LayoutToggle({
   const [layout, setLayout] = useState<FeedLayout>(value);
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
+  const [prevValue, setPrevValue] = useState<FeedLayout>(value);
+  if (prevValue !== value) {
+    setPrevValue(value);
+    setLayout(value);
+  }
 
   async function select(next: FeedLayout) {
     if (next === layout) return;

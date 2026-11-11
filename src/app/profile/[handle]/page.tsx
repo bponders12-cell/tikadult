@@ -3,6 +3,8 @@ import { notFound } from "next/navigation";
 import { prisma } from "@/lib/db";
 import { getSession } from "@/lib/auth";
 
+export const instant = false;
+
 type Props = { params: Promise<{ handle: string }> };
 
 export default async function ProfilePage({ params }: Props) {

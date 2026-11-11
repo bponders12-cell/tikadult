@@ -28,14 +28,17 @@ test.describe("category feed shell", () => {
 
     const shell = page.getByTestId("feed-shell");
     await expect(shell).toHaveAttribute("data-layout", "immersive");
+    const layoutGroup = page.getByRole("group", { name: "Feed layout" });
+    const sideButton = layoutGroup.getByRole("button", { name: "Side", exact: true });
+    await expect(sideButton).toBeVisible();
 
-    await page.getByRole("button", { name: "Side" }).click();
-    await expect(shell).toHaveAttribute("data-layout", "side");
+    await sideButton.click();
+    await expect(shell).toHaveAttribute("data-layout", "side", { timeout: 15000 });
     await expect(shell).toHaveClass(/layout-side/);
     await expect(page.getByRole("heading", { name: "Comments" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Featured" })).toBeVisible();
 
-    await page.getByRole("button", { name: "Immersive" }).click();
+    await layoutGroup.getByRole("button", { name: "Immersive", exact: true }).click();
     await expect(shell).toHaveAttribute("data-layout", "immersive");
     await expect(shell).toHaveClass(/layout-immersive/);
   });

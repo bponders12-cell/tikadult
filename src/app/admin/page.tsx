@@ -5,6 +5,10 @@ const tiles = [
   { title: "Registrations", note: "Coming in follow-on plans." },
   { title: "Complaints/Flags", note: "Coming in follow-on plans." },
   { title: "Money flow", note: "Coming in follow-on plans." },
+  {
+    title: "Health & ops",
+    note: "GET /api/health available. See docs/ops/cost-and-deploy-notes.md for budget/cost/launch validation notes.",
+  },
 ];
 
 export default function AdminPage() {

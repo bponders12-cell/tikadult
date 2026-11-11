@@ -2,6 +2,8 @@ import { redirect } from "next/navigation";
 import { getSession } from "@/lib/auth";
 import { canAccessAdmin } from "@/lib/rbac";
 
+export const instant = false;
+
 export default async function AdminLayout({
   children,
 }: {

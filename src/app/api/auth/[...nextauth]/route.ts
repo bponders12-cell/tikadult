@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { findUserByEmail, getSession, setSessionCookie, verifyPassword } from "@/lib/auth";
+import type { UserRole } from "@/lib/rbac";
 
 // Minimal credential/session auth endpoint (Auth.js-style path reserved for compatibility).
 // POST { email, password } -> sets session cookie; GET -> returns current session.
@@ -28,7 +29,7 @@ export async function POST(request: Request) {
     }
     await setSessionCookie({
       id: user.id,
-      role: user.role as any,
+      role: user.role as UserRole,
       email: user.email,
       handle: user.handle,
     });

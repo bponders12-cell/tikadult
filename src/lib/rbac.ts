@@ -1,6 +1,8 @@
+export type UserRole = "viewer" | "creator" | "admin" | "staff";
+
 export type SessionUser = {
   id?: string;
-  role?: "viewer" | "creator" | "admin" | "staff" | string;
+  role?: UserRole | string;
 };
 
 export type SessionLike = {

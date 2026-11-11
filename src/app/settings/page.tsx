@@ -11,10 +11,7 @@ import {
 } from "@/lib/settings";
 import LayoutToggle from "@/components/feed/LayoutToggle";
 
-function boolFrom(value: FormDataEntryValue | null, fallback: boolean): boolean {
-  if (value === null) return fallback;
-  return value === "on" || value === "true";
-}
+export const instant = false;
 
 export default async function SettingsPage() {
   const session = await getSession();

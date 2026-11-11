@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
-import { getUserSettings, updateUserSettings } from "@/lib/settings";
+import { getUserSettings, updateUserSettings, type UserSettingsPatch } from "@/lib/settings";
 
 export async function GET() {
   const session = await getSession();
@@ -34,16 +34,16 @@ export async function PUT(request: Request) {
       : {};
 
   // Only accept known user-owned setting fields.
-  const safePatch: Record<string, unknown> = {};
-  if ("feedLayout" in patch) safePatch.feedLayout = patch.feedLayout;
-  if ("privacyPrefs" in patch) safePatch.privacyPrefs = patch.privacyPrefs;
-  if ("messagingPrefs" in patch) safePatch.messagingPrefs = patch.messagingPrefs;
+  const safePatch: UserSettingsPatch = {};
+  if ("feedLayout" in patch) safePatch.feedLayout = patch.feedLayout as UserSettingsPatch["feedLayout"];
+  if ("privacyPrefs" in patch) safePatch.privacyPrefs = patch.privacyPrefs as UserSettingsPatch["privacyPrefs"];
+  if ("messagingPrefs" in patch) safePatch.messagingPrefs = patch.messagingPrefs as UserSettingsPatch["messagingPrefs"];
 
   try {
     const settings = await updateUserSettings(
       session.user.id,
       session.user.id,
-      safePatch as any,
+      safePatch,
     );
     return NextResponse.json({ settings });
   } catch (err) {

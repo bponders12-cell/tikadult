@@ -39,8 +39,13 @@ npm run test      # unit tests (Vitest)
 npm run test:e2e  # end-to-end tests (Playwright)
 ```
 
+## Health and ops
+
+- `GET /api/health` returns `{ "status": "ok" }` for basic runtime checks.
+- See [`docs/ops/cost-and-deploy-notes.md`](docs/ops/cost-and-deploy-notes.md) for budget assumptions (~`$100/month`), cost drivers (storage/transcode/egress), guardrails, and launch validation TODOs.
+
 ## Notes
 
-- 18+ only product (enforced in later tasks).
+- 18+ only product (age gate enforced in foundation; deeper compliance/verification decisions remain open).
 - Keep dependencies and infrastructure aligned with the ~`$100/month` budget baseline.
 - Follow-on plans: media pipeline, entitlements/payments, social/messaging/privacy, moderation/ops, installable licensed package. See `docs/superpowers/plans/` and spec in `docs/superpowers/specs/`.

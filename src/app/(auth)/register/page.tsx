@@ -2,6 +2,9 @@ import { redirect } from "next/navigation";
 import { cookies } from "next/headers";
 import { createUser, findUserByEmail, findUserByHandle, getSession, setSessionCookie } from "@/lib/auth";
 import { AGE_GATE_COOKIE, AGE_GATE_COOKIE_MAX_AGE, AGE_GATE_COOKIE_VALUE } from "@/lib/age-gate";
+import type { UserRole } from "@/lib/rbac";
+
+export const instant = false;
 
 async function registerAction(formData: FormData) {
   "use server";
@@ -34,7 +37,7 @@ async function registerAction(formData: FormData) {
     });
     await setSessionCookie({
       id: user.id,
-      role: user.role as any,
+      role: user.role as UserRole,
       email: user.email,
       handle: user.handle,
     });

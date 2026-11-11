@@ -1,6 +1,9 @@
 import { redirect } from "next/navigation";
 import { findUserByEmail, getSession, setSessionCookie, verifyPassword } from "@/lib/auth";
 import { recordAgeConfirmation } from "@/lib/age-gate";
+import type { UserRole } from "@/lib/rbac";
+
+export const instant = false;
 
 async function loginAction(formData: FormData) {
   "use server";
@@ -16,7 +19,7 @@ async function loginAction(formData: FormData) {
     }
     await setSessionCookie({
       id: user.id,
-      role: user.role as any,
+      role: user.role as UserRole,
       email: user.email,
       handle: user.handle,
     });
