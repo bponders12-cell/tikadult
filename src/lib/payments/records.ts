@@ -411,19 +411,62 @@ export async function sumCompletedByCreatorAndPayout(range: CreatedAtRange = {})
   return [...groups.values()];
 }
 
+export type ReversedStatus = "refunded" | "chargeback";
+
+/**
+ * Refunded / charged-back transactions whose creator earnings had already been marked paid out
+ * (money that left the platform to the creator before the purchase was reversed).
+ */
+export async function sumPaidOutReversals(range: CreatedAtRange = {}): Promise<Record<ReversedStatus, MoneySums>> {
+  const out: Record<ReversedStatus, MoneySums> = { refunded: zeroSums(), chargeback: zeroSums() };
+  if (dbAvailable()) {
+    const groups = await prisma.transaction.groupBy({
+      by: ["status"],
+      where: { status: { in: ["refunded", "chargeback"] }, payoutStatus: "paid", ...createdAtWhere(range) },
+      _count: { _all: true },
+      _sum: SUM_MONEY,
+    });
+    for (const g of groups) out[g.status as ReversedStatus] = sumsFromGroup(g);
+    return out;
+  }
+  for (const t of memoryTransactions.values()) {
+    if ((t.status === "refunded" || t.status === "chargeback") && t.payoutStatus === "paid" && inRange(t, range)) {
+      addTo(out[t.status], t);
+    }
+  }
+  return out;
+}
+
 // ---- Payouts (admin action) -------------------------------------------------
 
 export type PayoutMarkResult = { markedCount: number; paidCents: number };
 
+export type PayoutMarkOptions = {
+  /**
+   * Only transactions completed at or before this instant (what the admin saw and confirmed);
+   * purchases completing afterwards stay unpaid. Omitted = every completed + unpaid transaction.
+   */
+  completedAsOf?: Date;
+  now?: Date;
+};
+
 /**
- * Marks all of one creator's `completed` + `unpaid` transactions `paid` (paidOutAt = now) and reports
+ * Marks one creator's `completed` + `unpaid` transactions `paid` (paidOutAt = now) and reports
  * the creator earnings so marked. Records bookkeeping only: no money moves. Repeating marks nothing.
  */
-export async function markCreatorPayoutsPaid(creatorId: string, now: Date = new Date()): Promise<PayoutMarkResult> {
+export async function markCreatorPayoutsPaid(
+  creatorId: string,
+  { completedAsOf, now = new Date() }: PayoutMarkOptions = {},
+): Promise<PayoutMarkResult> {
   if (dbAvailable()) {
     // One UPDATE ... RETURNING: the rows counted are exactly the rows changed, even under concurrency.
     const rows = await prisma.transaction.updateManyAndReturn({
-      where: { creatorId, status: "completed", payoutStatus: "unpaid" },
+      where: {
+        creatorId,
+        status: "completed",
+        payoutStatus: "unpaid",
+        ...(completedAsOf ? { completedAt: { lte: completedAsOf } } : {}),
+      },
       data: { payoutStatus: "paid", paidOutAt: now },
       select: { creatorEarningsCents: true },
     });
@@ -436,6 +479,7 @@ export async function markCreatorPayoutsPaid(creatorId: string, now: Date = new 
   let paidCents = 0;
   for (const t of memoryTransactions.values()) {
     if (t.creatorId !== creatorId || t.status !== "completed" || t.payoutStatus !== "unpaid") continue;
+    if (completedAsOf && !(t.completedAt && t.completedAt.getTime() <= completedAsOf.getTime())) continue;
     t.payoutStatus = "paid";
     t.paidOutAt = new Date(now);
     t.updatedAt = new Date(now);

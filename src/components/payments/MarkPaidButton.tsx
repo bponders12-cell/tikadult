@@ -4,10 +4,16 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { centsToDollars } from "@/lib/media/format";
 
-type Props = { creatorId: string; creatorLabel: string; unpaidCents: number };
+type Props = {
+  creatorId: string;
+  creatorLabel: string;
+  unpaidCents: number;
+  /** ISO time the shown amount was computed; only purchases completed by then are marked. */
+  asOf: string;
+};
 
 /** Records that a creator's unpaid earnings were paid out off-platform (bookkeeping; moves no money). */
-export default function MarkPaidButton({ creatorId, creatorLabel, unpaidCents }: Props) {
+export default function MarkPaidButton({ creatorId, creatorLabel, unpaidCents, asOf }: Props) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
@@ -20,7 +26,7 @@ export default function MarkPaidButton({ creatorId, creatorLabel, unpaidCents }:
       const res = await fetch("/api/admin/money/payouts", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ creatorId }),
+        body: JSON.stringify({ creatorId, asOf }),
       });
       if (!res.ok) throw new Error(`Failed (${res.status})`);
       const { markedCount, paidCents } = (await res.json()) as { markedCount: number; paidCents: number };

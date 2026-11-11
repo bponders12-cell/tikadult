@@ -2,6 +2,7 @@ import {
   listTransactions,
   sumCompletedByAccessType,
   sumCompletedByCreatorAndPayout,
+  sumPaidOutReversals,
   sumTransactionsByStatus,
   type AccessType,
   type CreatedAtRange,
@@ -17,6 +18,14 @@ export const RECENT_TRANSACTIONS_LIMIT = 50;
 
 export type CountAndGross = { count: number; grossCents: number };
 
+/** A reversed (refunded / charged-back) bucket, plus the part whose creator earnings were already paid out. */
+export type ReversalSums = CountAndGross & {
+  /** Reversed transactions that had already been marked paid out to the creator. */
+  paidOutCount: number;
+  /** Creator earnings of those transactions: paid to the creator, then reversed. */
+  paidOutCents: number;
+};
+
 export type CreatorMoneyRow = {
   /** null = the creator account was deleted after the purchase. */
   creatorId: string | null;
@@ -30,12 +39,15 @@ export type CreatorMoneyRow = {
 export type MoneyFlowReport = {
   /** Transactions currently `completed`. */
   totals: { count: number; grossCents: number; platformFeeCents: number; creatorEarningsCents: number };
-  refunded: CountAndGross;
-  chargeback: CountAndGross;
+  refunded: ReversalSums;
+  chargeback: ReversalSums;
   pending: { count: number };
   failed: { count: number };
   byAccessType: Record<AccessType, CountAndGross>;
-  /** Creator earnings of completed transactions by payout state. */
+  /**
+   * Creator earnings of completed transactions by payout state. Earnings paid out and later reversed
+   * are not here; they are `refunded.paidOutCents` / `chargeback.paidOutCents`.
+   */
   payouts: { unpaidCents: number; paidCents: number };
   /** Sorted by unpaidCents descending. */
   byCreator: CreatorMoneyRow[];
@@ -46,10 +58,11 @@ export type MoneyFlowReport = {
 /** `filter` applies to transaction `createdAt`: `from` inclusive, `to` exclusive. */
 export async function getMoneyFlowReport(filter: CreatedAtRange = {}): Promise<MoneyFlowReport> {
   const range: CreatedAtRange = { from: filter.from, to: filter.to };
-  const [byStatus, byAccess, creatorGroups, recent] = await Promise.all([
+  const [byStatus, byAccess, creatorGroups, paidOutReversals, recent] = await Promise.all([
     sumTransactionsByStatus(range),
     sumCompletedByAccessType(range),
     sumCompletedByCreatorAndPayout(range),
+    sumPaidOutReversals(range),
     listTransactions({ ...range, limit: RECENT_TRANSACTIONS_LIMIT }),
   ]);
 
@@ -76,6 +89,11 @@ export async function getMoneyFlowReport(filter: CreatedAtRange = {}): Promise<M
   );
 
   const countAndGross = ({ count, grossCents }: CountAndGross): CountAndGross => ({ count, grossCents });
+  const reversal = (status: "refunded" | "chargeback"): ReversalSums => ({
+    ...countAndGross(byStatus[status]),
+    paidOutCount: paidOutReversals[status].count,
+    paidOutCents: paidOutReversals[status].creatorEarningsCents,
+  });
   const { completed } = byStatus;
   return {
     totals: {
@@ -84,8 +102,8 @@ export async function getMoneyFlowReport(filter: CreatedAtRange = {}): Promise<M
       platformFeeCents: completed.platformFeeCents,
       creatorEarningsCents: completed.creatorEarningsCents,
     },
-    refunded: countAndGross(byStatus.refunded),
-    chargeback: countAndGross(byStatus.chargeback),
+    refunded: reversal("refunded"),
+    chargeback: reversal("chargeback"),
     pending: { count: byStatus.pending.count },
     failed: { count: byStatus.failed.count },
     byAccessType: {

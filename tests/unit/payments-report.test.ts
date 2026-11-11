@@ -62,8 +62,8 @@ describe("getMoneyFlowReport", () => {
   it("returns zeros (all keys present) when there are no transactions", async () => {
     const r = await getMoneyFlowReport();
     expect(r.totals).toEqual({ count: 0, grossCents: 0, platformFeeCents: 0, creatorEarningsCents: 0 });
-    expect(r.refunded).toEqual({ count: 0, grossCents: 0 });
-    expect(r.chargeback).toEqual({ count: 0, grossCents: 0 });
+    expect(r.refunded).toEqual({ count: 0, grossCents: 0, paidOutCount: 0, paidOutCents: 0 });
+    expect(r.chargeback).toEqual({ count: 0, grossCents: 0, paidOutCount: 0, paidOutCents: 0 });
     expect(r.pending).toEqual({ count: 0 });
     expect(r.failed).toEqual({ count: 0 });
     expect(r.byAccessType).toEqual({
@@ -90,8 +90,8 @@ describe("getMoneyFlowReport", () => {
 
     const r = await getMoneyFlowReport();
     expect(r.totals).toEqual({ count: 3, grossCents: 6499, platformFeeCents: 1300, creatorEarningsCents: 5199 });
-    expect(r.refunded).toEqual({ count: 1, grossCents: 700 });
-    expect(r.chargeback).toEqual({ count: 2, grossCents: 500 });
+    expect(r.refunded).toEqual({ count: 1, grossCents: 700, paidOutCount: 0, paidOutCents: 0 });
+    expect(r.chargeback).toEqual({ count: 2, grossCents: 500, paidOutCount: 0, paidOutCents: 0 });
     expect(r.pending).toEqual({ count: 1 });
     expect(r.failed).toEqual({ count: 2 });
     expect(r.byAccessType).toEqual({
@@ -170,7 +170,7 @@ describe("getMoneyFlowReport", () => {
       to: new Date("2026-03-01T00:00:00Z"),
     });
     expect(r.totals).toMatchObject({ count: 1, grossCents: 200 });
-    expect(r.refunded).toEqual({ count: 1, grossCents: 50 });
+    expect(r.refunded).toEqual({ count: 1, grossCents: 50, paidOutCount: 0, paidOutCents: 0 });
     expect(r.byAccessType.monthly).toEqual({ count: 1, grossCents: 200 });
     expect(r.byCreator).toEqual([expect.objectContaining({ creatorId: "creator1", grossCents: 200 })]);
     expect(r.recent.map((t) => t.id)).toContain(feb.id);
@@ -190,6 +190,24 @@ describe("getMoneyFlowReport", () => {
     const r = await getMoneyFlowReport();
     expect(r.recent).toHaveLength(50);
     expect(r.recent.map((t) => t.id)).toEqual(ids.slice(5).reverse());
+  });
+
+  it("reports refunds/chargebacks of earnings already paid out to the creator", async () => {
+    const reverse = (t: TransactionRecord, type: "refunded" | "chargeback") =>
+      applyPaymentEvent("fake", { eventId: `ev_${++seq}`, type: `payment.${type}`, providerRef: t.providerRef! });
+    const refundedAfterPayout = await seed("completed", { creatorId: "c1", grossCents: 1000 }); // 800
+    const chargedAfterPayout = await seed("completed", { creatorId: "c1", grossCents: 500 }); // 400
+    const kept = await seed("completed", { creatorId: "c1", grossCents: 2000 }); // 1600
+    expect(await markCreatorPayoutsPaid("c1")).toEqual({ markedCount: 3, paidCents: 2800 });
+    await reverse(refundedAfterPayout, "refunded");
+    await reverse(chargedAfterPayout, "chargeback");
+    await seed("refunded", { creatorId: "c1", grossCents: 300 }); // refunded before any payout
+
+    const r = await getMoneyFlowReport();
+    expect(r.refunded).toEqual({ count: 2, grossCents: 1300, paidOutCount: 1, paidOutCents: 800 });
+    expect(r.chargeback).toEqual({ count: 1, grossCents: 500, paidOutCount: 1, paidOutCents: 400 });
+    expect(r.payouts).toEqual({ unpaidCents: 0, paidCents: 1600 });
+    expect(await getTransaction(kept.id)).toMatchObject({ status: "completed", payoutStatus: "paid" });
   });
 
   it("keeps a transaction whose creator was deleted under a null creatorId", async () => {
@@ -227,5 +245,18 @@ describe("markCreatorPayoutsPaid", () => {
     }
     expect(await markCreatorPayoutsPaid("c1")).toEqual({ markedCount: 0, paidCents: 0 });
     expect(await markCreatorPayoutsPaid("nobody")).toEqual({ markedCount: 0, paidCents: 0 });
+  });
+
+  it("with completedAsOf, marks only transactions completed at or before that time", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-01T12:00:00Z"));
+    const confirmed = await seed("completed", { creatorId: "c1", grossCents: 1000 }); // 800
+    const asOf = new Date(); // what the admin saw and confirmed
+    vi.setSystemTime(new Date("2026-05-01T12:00:01Z"));
+    const later = await seed("completed", { creatorId: "c1", grossCents: 500 }); // completed after render
+
+    expect(await markCreatorPayoutsPaid("c1", { completedAsOf: asOf })).toEqual({ markedCount: 1, paidCents: 800 });
+    expect(await getTransaction(confirmed.id)).toMatchObject({ payoutStatus: "paid" });
+    expect(await getTransaction(later.id)).toMatchObject({ payoutStatus: "unpaid", paidOutAt: null });
   });
 });

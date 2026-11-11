@@ -30,6 +30,8 @@ const num = { ...cell, textAlign: "right" } as const;
 export default async function AdminMoneyPage() {
   const session = await getSession();
   const isAdmin = session?.user?.role === "admin";
+  // Captured before the report is read: "Mark paid" then marks at most what this page shows.
+  const asOf = new Date().toISOString();
   const [report, creatorShareBps] = await Promise.all([getMoneyFlowReport(), getCreatorShareBps()]);
   const handles = await resolveHandles(
     report.byCreator.flatMap((c) => (c.creatorId ? [c.creatorId] : [])),
@@ -40,13 +42,21 @@ export default async function AdminMoneyPage() {
     return handle ? `@${handle}` : id;
   };
 
-  const tiles = [
+  const tiles: { title: string; value: string; note?: string }[] = [
     { title: "Completed purchases", value: String(report.totals.count) },
     { title: "Gross", value: usd(report.totals.grossCents) },
     { title: "Platform cut", value: usd(report.totals.platformFeeCents) },
     { title: "Creator earnings", value: usd(report.totals.creatorEarningsCents) },
-    { title: "Refunds", value: `${report.refunded.count} (${usd(report.refunded.grossCents)})` },
-    { title: "Chargebacks", value: `${report.chargeback.count} (${usd(report.chargeback.grossCents)})` },
+    {
+      title: "Refunds",
+      value: `${report.refunded.count} (${usd(report.refunded.grossCents)})`,
+      note: `${report.refunded.paidOutCount} already paid out to creators (${usd(report.refunded.paidOutCents)} of earnings)`,
+    },
+    {
+      title: "Chargebacks",
+      value: `${report.chargeback.count} (${usd(report.chargeback.grossCents)})`,
+      note: `${report.chargeback.paidOutCount} already paid out to creators (${usd(report.chargeback.paidOutCents)} of earnings)`,
+    },
     { title: "Pending", value: String(report.pending.count) },
     { title: "Failed", value: String(report.failed.count) },
     { title: "Creator earnings unpaid", value: usd(report.payouts.unpaidCents) },
@@ -61,7 +71,8 @@ export default async function AdminMoneyPage() {
       <h2 style={{ margin: 0 }}>Money flow</h2>
       <p style={{ margin: 0, color: "#666" }}>
         Totals cover transactions that are currently completed. Refunded and charged-back purchases are
-        reported separately and are not included in the totals. All amounts are in USD.
+        reported separately and are not included in the totals or in the unpaid/paid creator earnings; their
+        tiles show how much of those earnings had already been paid out. All amounts are in USD.
       </p>
 
       <section
@@ -71,6 +82,7 @@ export default async function AdminMoneyPage() {
           <article key={t.title} style={box}>
             <h3 style={{ margin: 0, fontSize: "0.9rem", color: "#555" }}>{t.title}</h3>
             <p style={{ margin: "0.25rem 0 0", fontSize: "1.3rem" }}>{t.value}</p>
+            {t.note ? <p style={{ margin: "0.25rem 0 0", fontSize: "0.8rem", color: "#666" }}>{t.note}</p> : null}
           </article>
         ))}
       </section>
@@ -144,6 +156,7 @@ export default async function AdminMoneyPage() {
                           creatorId={c.creatorId}
                           creatorLabel={creatorLabel(c.creatorId)}
                           unpaidCents={c.unpaidCents}
+                          asOf={asOf}
                         />
                       ) : null}
                     </td>
