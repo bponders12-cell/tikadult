@@ -134,12 +134,20 @@ function fromRow(row: NonNullable<PrismaMediaRow>): MediaRecord {
   };
 }
 
-/** undefined = leave alone, null = clear, string = link to that category (unknown slug clears). */
+export class UnknownCategoryError extends Error {
+  constructor(slug: string) {
+    super(`Category "${slug}" is not present in the database`);
+    this.name = "UnknownCategoryError";
+  }
+}
+
+/** undefined = leave alone, null = clear, string = link to that category (throws if absent from the DB). */
 async function resolveCategoryId(slug: string | null | undefined): Promise<string | null | undefined> {
   if (slug === undefined) return undefined;
   if (slug === null) return null;
   const cat = await prisma.category.findUnique({ where: { slug }, select: { id: true } });
-  return cat?.id ?? null;
+  if (!cat) throw new UnknownCategoryError(slug);
+  return cat.id;
 }
 
 // ---- Public API -----------------------------------------------------------

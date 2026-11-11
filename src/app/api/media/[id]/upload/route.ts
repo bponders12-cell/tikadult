@@ -4,6 +4,31 @@ import { getOwnedMedia, jsonError, requireUserId, toPublicMedia, type IdContext 
 import { setMediaAsset } from "@/lib/media/records";
 import { getStorage } from "@/lib/media/storage";
 
+/** Reads the request body, aborting (returns null) as soon as it exceeds `cap` bytes. */
+async function readCapped(request: Request, cap: number): Promise<Uint8Array | null> {
+  if (!request.body) return new Uint8Array(0);
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > cap) {
+      await reader.cancel();
+      return null;
+    }
+    chunks.push(value);
+  }
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const c of chunks) {
+    out.set(c, offset);
+    offset += c.byteLength;
+  }
+  return out;
+}
+
 /**
  * Upload step 2 (local-adapter byte receiver): PUT the raw file body.
  * A presigned-URL S3 flow replaces this endpoint without changing the records
@@ -18,7 +43,7 @@ export async function PUT(request: Request, { params }: IdContext) {
 
   const type = media.type as UploadMediaType;
   const declared = (request.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase();
-  if (declared !== media.format || !(declared in ALLOWED_FORMATS[type])) {
+  if (declared !== media.format || !Object.hasOwn(ALLOWED_FORMATS[type], declared)) {
     return jsonError("Content-Type does not match the declared format", 415);
   }
 
@@ -28,9 +53,11 @@ export async function PUT(request: Request, { params }: IdContext) {
     return jsonError(`File exceeds the ${cap} byte limit`, 413);
   }
 
-  const bytes = new Uint8Array(await request.arrayBuffer());
+  // Stream with a running counter so a missing/lying content-length (chunked
+  // transfer) can never buffer more than `cap` bytes.
+  const bytes = await readCapped(request, cap);
+  if (bytes === null) return jsonError(`File exceeds the ${cap} byte limit`, 413);
   if (bytes.byteLength === 0) return jsonError("Empty upload", 400);
-  if (bytes.byteLength > cap) return jsonError(`File exceeds the ${cap} byte limit`, 413);
 
   const ext = ALLOWED_FORMATS[type][declared];
   const storageKey = `media/${userId}/${media.id}/original.${ext}`;

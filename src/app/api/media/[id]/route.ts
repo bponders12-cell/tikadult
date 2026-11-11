@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import {
+  categoryErrorOrThrow,
   getOwnedMedia,
   jsonError,
   readJson,
@@ -31,7 +32,12 @@ export async function PATCH(request: Request, { params }: IdContext) {
   const v = validateUpdate(parsed.body, media);
   if (!v.ok) return jsonError(v.error, v.status);
 
-  const updated = await updateMedia(media.id, v.value);
+  let updated;
+  try {
+    updated = await updateMedia(media.id, v.value);
+  } catch (e) {
+    return categoryErrorOrThrow(e);
+  }
   if (!updated) return jsonError("Not found", 404);
   return NextResponse.json({ media: toPublicMedia(updated) });
 }

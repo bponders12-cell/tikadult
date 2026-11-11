@@ -35,7 +35,7 @@ export function maxUploadBytes(type: UploadMediaType, env: Env = process.env): n
 /** Resolves the media type for an allowlisted MIME type, or null if not allowed. */
 export function mediaTypeForContentType(contentType: string): UploadMediaType | null {
   for (const type of ["video", "image"] as const) {
-    if (contentType in ALLOWED_FORMATS[type]) return type;
+    if (Object.hasOwn(ALLOWED_FORMATS[type], contentType)) return type;
   }
   return null;
 }

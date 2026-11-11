@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
-import { getMedia, type MediaRecord } from "@/lib/media/records";
+import { getMedia, UnknownCategoryError, type MediaRecord } from "@/lib/media/records";
 
 export const jsonError = (error: string, status: number) =>
   NextResponse.json({ error }, { status });
@@ -34,3 +34,9 @@ export async function readJson(request: Request): Promise<{ ok: true; body: unkn
 }
 
 export type IdContext = { params: Promise<{ id: string }> };
+
+/** Turns a category-not-in-DB failure into a 400; rethrows anything else. */
+export function categoryErrorOrThrow(e: unknown) {
+  if (e instanceof UnknownCategoryError) return jsonError("Category is not available", 400);
+  throw e;
+}

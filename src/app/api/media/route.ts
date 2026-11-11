@@ -1,5 +1,11 @@
 import { NextResponse } from "next/server";
-import { jsonError, readJson, requireUserId, toPublicMedia } from "@/lib/media/api";
+import {
+  categoryErrorOrThrow,
+  jsonError,
+  readJson,
+  requireUserId,
+  toPublicMedia,
+} from "@/lib/media/api";
 import { createMedia, listMediaByOwner } from "@/lib/media/records";
 import { validateInit } from "@/lib/media/validation";
 
@@ -25,17 +31,22 @@ export async function POST(request: Request) {
   const v = validateInit(parsed.body);
   if (!v.ok) return jsonError(v.error, v.status);
 
-  const media = await createMedia({
-    ownerId: userId,
-    type: v.value.type,
-    visibility: v.value.visibility,
-    unlockPriceCents: v.value.unlockPriceCents,
-    title: v.value.title,
-    categorySlug: v.value.categorySlug,
-    durationSec: v.value.durationSec,
-    sizeBytes: v.value.sizeBytes,
-    format: v.value.contentType,
-  });
+  let media;
+  try {
+    media = await createMedia({
+      ownerId: userId,
+      type: v.value.type,
+      visibility: v.value.visibility,
+      unlockPriceCents: v.value.unlockPriceCents,
+      title: v.value.title,
+      categorySlug: v.value.categorySlug,
+      durationSec: v.value.durationSec,
+      sizeBytes: v.value.sizeBytes,
+      format: v.value.contentType,
+    });
+  } catch (e) {
+    return categoryErrorOrThrow(e);
+  }
   return NextResponse.json(
     {
       media: toPublicMedia(media),
