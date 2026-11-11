@@ -72,11 +72,24 @@ enum EntitlementStatus {
   revoked
 }
 
+enum EntitlementScope {
+  /// The creator's whole private collection (creatorId).
+  creator
+  /// A single media item (mediaId).
+  media
+}
+
 enum TransactionStatus {
   pending
   completed
   failed
   refunded
+  chargeback
+}
+
+enum PayoutStatus {
+  unpaid
+  paid
 }
 
 model User {
@@ -95,8 +108,10 @@ model User {
   media         Media[]       @relation("UserMedia")
   reportsFiled  Report[]      @relation("ReportsFiled")
   reportsTarget Report[]      @relation("ReportsTarget")
-  entitlements  Entitlement[]
-  transactions  Transaction[]
+  entitlements  Entitlement[]       @relation("EntitlementBuyer")
+  purchases     Transaction[]       @relation("TransactionBuyer")
+  sales         Transaction[]       @relation("TransactionCreator")
+  pricing       CreatorPricing?
 }
 
 model Category {
@@ -164,6 +179,7 @@ model Media {
 
   assets       MediaAsset[]
   entitlements Entitlement[]
+  transactions Transaction[]
 
   @@index([ownerId])
   @@index([status, visibility])
@@ -200,34 +216,92 @@ model Report {
   updatedAt    DateTime     @updatedAt
 }
 
-/// Placeholder for future paid access/entitlements (follow-on plans).
+/// Paid access grant. scope=creator covers all of `creatorId`'s private collection;
+/// scope=media covers one `mediaId`. Validity is evaluated at read time (src/lib/payments/entitlements.ts).
 model Entitlement {
   id        String            @id @default(cuid())
   userId    String
-  user      User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user      User              @relation("EntitlementBuyer", fields: [userId], references: [id], onDelete: Cascade)
+  scope     EntitlementScope
+  creatorId String?
   mediaId   String?
-  media     Media?            @relation(fields: [mediaId], references: [id], onDelete: SetNull)
-  type      EntitlementType   @default(one_time)
+  media     Media?            @relation(fields: [mediaId], references: [id], onDelete: Cascade)
+  type      EntitlementType
   status    EntitlementStatus @default(active)
   startsAt  DateTime          @default(now())
+  /// Null = never expires (one_time, per_video).
   endsAt    DateTime?
   createdAt DateTime          @default(now())
   updatedAt DateTime          @updatedAt
 
   transaction Transaction?
+
+  @@index([userId, scope])
+  @@index([userId, creatorId])
+  @@index([userId, mediaId])
 }
 
-/// Placeholder for future money flow/purchases/payouts (follow-on plans).
+/// One purchase attempt. Money columns are integer cents (BigInt; the records layer maps to number).
+/// The split is snapshotted at creation and never recomputed.
 model Transaction {
-  id            String            @id @default(cuid())
-  userId        String
-  user          User              @relation(fields: [userId], references: [id], onDelete: Cascade)
-  entitlementId String?           @unique
-  entitlement   Entitlement?      @relation(fields: [entitlementId], references: [id], onDelete: SetNull)
-  amountCents   Int               @default(0)
-  currency      String            @default("USD")
-  status        TransactionStatus @default(pending)
-  providerRef   String?
-  createdAt     DateTime          @default(now())
-  updatedAt     DateTime          @updatedAt
+  id                   String            @id @default(cuid())
+  buyerId              String?
+  buyer                User?             @relation("TransactionBuyer", fields: [buyerId], references: [id], onDelete: SetNull)
+  creatorId            String?
+  creator              User?             @relation("TransactionCreator", fields: [creatorId], references: [id], onDelete: SetNull)
+  mediaId              String?
+  media                Media?            @relation(fields: [mediaId], references: [id], onDelete: SetNull)
+  accessType           EntitlementType
+  grossCents           BigInt
+  platformFeeCents     BigInt
+  creatorEarningsCents BigInt
+  /// Creator share in basis points at the time the transaction was created.
+  creatorShareBps      Int
+  currency             String            @default("USD")
+  status               TransactionStatus @default(pending)
+  provider             String
+  providerRef          String?
+  entitlementId        String?           @unique
+  entitlement          Entitlement?      @relation(fields: [entitlementId], references: [id], onDelete: SetNull)
+  payoutStatus         PayoutStatus      @default(unpaid)
+  paidOutAt            DateTime?
+  completedAt          DateTime?
+  createdAt            DateTime          @default(now())
+  updatedAt            DateTime          @updatedAt
+
+  @@unique([provider, providerRef])
+  @@index([status])
+  @@index([creatorId])
+  @@index([buyerId])
+}
+
+/// Processed provider webhook deliveries (de-duplication).
+model PaymentEvent {
+  id            String   @id @default(cuid())
+  provider      String
+  eventId       String
+  type          String
+  transactionId String?
+  receivedAt    DateTime @default(now())
+
+  @@unique([provider, eventId])
+}
+
+/// A creator's collection prices in cents. Null = option not offered.
+model CreatorPricing {
+  id                String   @id @default(cuid())
+  userId            String   @unique
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  monthlyPriceCents Int?
+  yearlyPriceCents  Int?
+  oneTimePriceCents Int?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+}
+
+/// Platform-wide key/value settings (e.g. creatorShareBps).
+model PlatformSetting {
+  key       String   @id
+  value     Json
+  updatedAt DateTime @updatedAt
 }
