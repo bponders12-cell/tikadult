@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { notFound } from "next/navigation";
 import { getSession } from "@/lib/auth";
 import { resolveHandles } from "@/lib/media/feed";
 import { centsToDollars } from "@/lib/media/format";
@@ -6,6 +7,7 @@ import type { AccessType } from "@/lib/payments/records";
 import { getMoneyFlowReport, RECENT_TRANSACTIONS_LIMIT } from "@/lib/payments/report";
 import { MAX_CREATOR_SHARE_BPS, MIN_CREATOR_SHARE_BPS } from "@/lib/payments/split";
 import { getCreatorShareBps } from "@/lib/platform-settings";
+import { canAccessAdmin } from "@/lib/rbac";
 import MarkPaidButton from "@/components/payments/MarkPaidButton";
 import SplitSettingForm from "@/components/payments/SplitSettingForm";
 
@@ -26,9 +28,14 @@ const table = { borderCollapse: "collapse", width: "100%", fontSize: "0.9rem" } 
 const cell = { borderBottom: "1px solid #eee", padding: "0.4rem 0.6rem", textAlign: "left" } as const;
 const num = { ...cell, textAlign: "right" } as const;
 
-/** Money flow: purchases, split, refunds/chargebacks and creator payouts. Admin layout restricts to admin/staff. */
+/**
+ * Money flow: purchases, split, refunds/chargebacks and creator payouts. Restricted to admin/staff.
+ * The page gates itself: the admin layout's check does not control what this page puts in the RSC
+ * payload (layouts do not re-render on navigation), so it must not be the only check.
+ */
 export default async function AdminMoneyPage() {
   const session = await getSession();
+  if (!canAccessAdmin(session?.user)) notFound();
   const isAdmin = session?.user?.role === "admin";
   // Captured before the report is read: "Mark paid" then marks at most what this page shows.
   const asOf = new Date().toISOString();
