@@ -209,6 +209,21 @@ describe("collection (monthly / yearly / one_time)", () => {
     expect(await collection("one_time", "creator1", "other-buyer")).toMatchObject({ ok: true });
   });
 
+  it("409s monthly/yearly when the buyer already holds a valid one-time grant (nothing extra to buy)", async () => {
+    await createEntitlement({
+      userId: "buyer",
+      scope: "creator",
+      creatorId: "creator1",
+      type: "one_time",
+      startsAt: new Date(Date.now() - DAY),
+      endsAt: null,
+    });
+    expect(await collection("monthly")).toMatchObject({ ok: false, status: 409 });
+    expect(await collection("yearly")).toMatchObject({ ok: false, status: 409 });
+    expect(await listTransactions()).toEqual([]);
+    expect(await collection("monthly", "creator1", "other-buyer")).toMatchObject({ ok: true });
+  });
+
   it("does not 409 a one-time purchase for a different creator's grant", async () => {
     await setCreatorPricing("creator2", { ...NONE, oneTimePriceCents: 100 });
     await createEntitlement({

@@ -4,7 +4,7 @@ import { getSession } from "@/lib/auth";
 import { resolveHandles } from "@/lib/media/feed";
 import { centsToDollars } from "@/lib/media/format";
 import { getMedia } from "@/lib/media/records";
-import { isAccessType } from "@/lib/payments/checkout";
+import { isAccessType, resolvePurchase, type RefusalReason } from "@/lib/payments/checkout";
 import { getCreatorPricing, priceForAccessType } from "@/lib/payments/pricing";
 import type { AccessType } from "@/lib/payments/records";
 import CheckoutButton from "@/components/payments/CheckoutButton";
@@ -77,7 +77,15 @@ export default async function CheckoutPage({ searchParams }: { searchParams: Sea
     redirect(`/login?next=${encodeURIComponent(`/checkout?${query}`)}`);
   }
 
-  const offer = isAccessType(type) ? await loadOffer(type, creatorId, mediaId) : null;
+  // Same eligibility check the checkout API runs before charging, so no Pay button is shown that
+  // the API would refuse (own content, or access the viewer already has).
+  let offer: Offer | null = null;
+  let refusal: RefusalReason | undefined;
+  if (isAccessType(type)) {
+    const eligibility = await resolvePurchase({ buyerId: session.user.id, accessType: type, creatorId, mediaId });
+    if ("ok" in eligibility) refusal = eligibility.reason;
+    else offer = await loadOffer(type, creatorId, mediaId);
+  }
 
   return (
     <main className="creator-shell">
@@ -100,6 +108,10 @@ export default async function CheckoutPage({ searchParams }: { searchParams: Sea
               label={`Pay $${centsToDollars(offer.priceCents)}`}
             />
           </div>
+        ) : refusal === "own_content" ? (
+          <p role="status">This is your own content, so there is nothing to buy.</p>
+        ) : refusal === "already_has_access" ? (
+          <p role="status">You already have access, so there is nothing to buy.</p>
         ) : (
           <p role="alert" className="creator-error">
             This purchase is not available.
