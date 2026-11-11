@@ -20,7 +20,12 @@
 - Avoid ML/heavy recommendation or always-on media workers in early stages.
 
 ## Validation TODOs (must resolve before launch/sale)
-- **Payments:** validate PayPal/Stripe adult-content eligibility, splits/payouts support, and business entity/banking readiness; select compliant fallback if not viable.
+- **Payments:** desk research done — see [`payment-provider-eligibility.md`](payment-provider-eligibility.md). Its findings:
+  - Stripe prohibits adult content.
+  - PayPal does not permit sexually oriented digital content (from secondary sources; PayPal's pages could not be fetched).
+  - Recommended (desk research only): CCBill primary, Verotel fallback.
+
+  Eligibility is still **unconfirmed** until a provider's underwriting approves an application. Still open: the owner checklist in that doc (entity, banking, application, payout model, fees, split, refund policy) and the card-brand compliance prerequisites.
 - **Compliance/jurisdiction:** define operating entity/jurisdictions served or blocked; age assurance level; consent/record-keeping standards (beyond 18+ gate); terms/acceptable-use.
 - **Licensing/activation (packaging plan):** owner-operated license service reliability/cost, activation grace/outage policy, one-site binding and site-move flow, and license terms/packaging.
 - **Provider/infra selection:** confirm costed choices for DB, storage/CDN, hosting, and any managed services fit ~$100/month early target at expected scale.
@@ -70,3 +75,104 @@ Only web-safe formats are allowed (mp4/webm video, jpg/png/webp images) so the o
 - **Creator-facing gaps:** `video/quicktime` (iPhone) is rejected at upload init, and duration-less browser-recorded WebM fails as unverifiable.
 - **Takedown latency:** delivery sends `max-age=3600`, so cached bytes of a removed/taken-down item can outlive the takedown by up to 1 hour in a viewer's browser; revisit together with CDN/edge gating.
 - **Stranded processing:** items left at `processing/processing` (worker died) are reclaimed by `runPendingMedia` into the failed state (draft, "processing interrupted — please retry") once untouched for `MEDIA_PROCESSING_STALE_MINUTES` (default 15, env-configurable). No retry/attempt cap.
+
+## Payments & entitlements (Plan 3)
+
+Code lives in:
+- `src/lib/payments/`
+- `src/app/api/payments/`
+- `src/app/api/webhooks/payments/[provider]/`
+- `src/app/(pay)/checkout/`
+- `src/app/admin/money/`
+
+Provider research, the recommendation and the owner checklist are in [`payment-provider-eligibility.md`](payment-provider-eligibility.md).
+
+### Environment variables
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `PAYMENT_PROVIDER` | `fake` outside production; **unset = payments disabled in production** | Name of the payment provider. Only `fake` is implemented. Any other value makes payments unavailable. |
+| `PAYMENTS_WEBHOOK_SECRET` | A fixed dev-only value outside production; **required in production** | Webhook signing secret. The fake provider uses it as the HMAC-SHA256 key for the `x-fake-signature` header. |
+| `DATABASE_URL` | (existing) | **Required for payments in production.** In-memory money records are not durable, so without it payments are refused. |
+| `NEXTAUTH_URL` | (existing) | Used as the origin of the checkout return URLs (`/checkout/result?tx=…`); falls back to the request origin. |
+
+### Production guard
+`getPaymentProvider()` (`src/lib/payments/provider.ts`) is evaluated lazily, never at module load, because `next build` runs with `NODE_ENV=production`. In production it throws `PaymentsNotConfiguredError` in any of these cases:
+- `DATABASE_URL` is unset;
+- `PAYMENTS_WEBHOOK_SECRET` is unset;
+- `PAYMENT_PROVIDER` is unset or `fake`;
+- `PAYMENT_PROVIDER` names an unknown provider.
+
+The error then surfaces as follows:
+- Checkout (`POST /api/payments/checkout`) returns **503** "Payments are not available yet".
+- The webhook route returns **503**.
+- The dev-only fake hosted checkout (`/checkout/fake`) and `POST /api/payments/fake/simulate` return **404**. They do so in production regardless, and also whenever the configured provider is not `fake`.
+
+Since no real provider exists yet, **payments are off in any production deploy** until an adapter is added.
+
+### Access model
+- **Private collection:** all of one creator's media with status `live` and visibility `private` or `restricted`. There is no separate collection table.
+- **Access types:**
+
+  | Type | Scope | Term |
+  | --- | --- | --- |
+  | `monthly` | whole collection | 30 days |
+  | `yearly` | whole collection | 365 days |
+  | `one_time` | whole collection | never expires |
+  | `per_video` | one item | never expires |
+
+- **No auto-renew.** Repeat monthly/yearly purchases stack: a new term starts at the latest current or future end date.
+- **Expiry** is evaluated when a grant is read; there is no sweeper job.
+- **Prices:**
+  - Per-video: `Media.unlockPriceCents`.
+  - Collection: per-creator `CreatorPricing` (monthly, yearly and one-time; `null` means not offered).
+  - All prices are in USD.
+- **Enforcement:** non-entitled viewers get no bytes of a non-public item, thumbnails included. A grant only unlocks media that is `live`.
+
+### Split setting and snapshot policy
+- **Setting:** one platform setting, `creatorShareBps`.
+  - Allowed range: 7000–8000. Default: **8000 (80% to the creator)**.
+  - Viewable by `admin` and `staff` at `/admin/money`; only `admin` can change it.
+- **Calculation:** at checkout, `computeSplit(gross, bps)` is stored on the transaction:
+  - creator = `floor(gross × bps / 10000)`;
+  - platform = the remainder.
+- **Snapshot:** changing the setting only affects transactions created afterwards. Reports sum the stored columns and never recompute.
+- **Processor fees** are not modelled. They come out of the platform's share unless the owner decides otherwise (see the eligibility doc).
+
+### Refunds and chargebacks
+- Only a verified provider event changes a transaction's status. The allowed transitions are:
+  - `pending` → `completed` or `failed`
+  - `failed` → `completed`
+  - `completed` → `refunded` or `chargeback`
+- `completed` grants exactly one entitlement.
+- `refunded` and `chargeback` set that entitlement to `revoked`, so access stops immediately.
+- Any other event is a no-op:
+  - duplicate (de-duplicated per provider + event id);
+  - out of order;
+  - unknown reference — the webhook answers 404 so the provider retries.
+- **Refunds can only be received, not started from the app.**
+- A reversal of earnings already marked paid keeps `payoutStatus: "paid"`. `/admin/money` reports it as "already paid out to creators". Nothing is recovered automatically.
+
+### Manual payout tracking
+- No money is paid out by the app.
+- Admins pay creators outside the app, then click "Mark paid" on `/admin/money`.
+  - This sets `paid`/`paidOutAt` on that creator's `completed` + `unpaid` transactions completed at or before the moment the page was loaded.
+  - It is bookkeeping only.
+
+### Cost impact
+- **No new services, workers, queues or cron jobs.** Plan 3 adds three Postgres tables (`PaymentEvent`, `CreatorPricing`, `PlatformSetting`) and extends the existing `Entitlement` and `Transaction` tables.
+- **Real-provider costs are not yet incurred.** These are percentage fees (roughly 13–17% published by Verotel), a rolling reserve, and possible Visa/Mastercard high-risk registration fees (listed by CCBill at $950 + $1000 per year). These fees alone could exceed the ~$100/month budget, so see the eligibility doc before choosing a provider.
+
+### Launch-validation TODOs (payments)
+- **Migrations:**
+  - No migration has been generated for the payment tables.
+  - The Prisma code paths are type-checked only and have **not run against PostgreSQL**. This covers settlement transactions, `groupBy` reports, `updateManyAndReturn` payout marking and the date filters.
+  - Generate and review the migration, then run the payment unit flows against a real database.
+- **No real provider:** an adapter must be built (see "Adding a real provider" in the eligibility doc) after a provider approves an application.
+- **The fake provider is dev-only:** no money moves, and it is refused in production.
+- **E2E:** `tests/e2e/purchase.spec.ts` is written but **failed** in this environment.
+  - Cause: without `DATABASE_URL`, `next dev` gives route handlers and server-rendered pages separate in-memory stores, so the checkout page cannot see media created via the API. This is recorded in Task 3's report.
+  - It needs Postgres to pass. Unit and smoke coverage (`tests/unit/purchase-smoke.test.ts`) pass.
+- **Known concurrency gap (Prisma):**
+  - Two different monthly/yearly purchases for the same buyer and creator that complete at the same moment may overlap instead of stacking.
+  - A double grant per transaction is impossible.
+- **Compliance before taking adult payments:** pre-publication moderation, complaint/removal handling, creator ID and age verification, and co-performer consent records (card-brand rules; see the eligibility doc).
