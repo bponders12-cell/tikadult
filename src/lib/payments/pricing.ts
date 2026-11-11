@@ -30,7 +30,11 @@ const notOffered = (): CreatorPricing => ({
   oneTimePriceCents: null,
 });
 
-const memoryPricing = new Map<string, CreatorPricing>();
+// Anchored on globalThis (the same pattern as the Prisma client in src/lib/db.ts): Next.js can
+// instantiate this module separately for route handlers and pages, and a plain module-level store
+// would then be split so that a write from one is invisible to the other.
+const globalForPricing = globalThis as unknown as { __memoryPricing?: Map<string, CreatorPricing> };
+const memoryPricing = (globalForPricing.__memoryPricing ??= new Map<string, CreatorPricing>());
 
 /** Test helper: clears the in-memory store. */
 export function resetMemoryPricing(): void {

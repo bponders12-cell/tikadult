@@ -44,7 +44,11 @@ const DEFAULT_MESSAGING_PREFS: MessagingPrefs = {
 
 // Simple in-memory fallback so behavior remains usable when DB is unavailable.
 // Keyed by userId; not durable across process restarts.
-const memorySettings = new Map<string, UserSettingsRecord>();
+// Anchored on globalThis (the same pattern as the Prisma client in src/lib/db.ts): Next.js can
+// instantiate this module separately for route handlers and pages, and a plain module-level store
+// would then be split so that a write from one is invisible to the other.
+const globalForUserSettings = globalThis as unknown as { __memoryUserSettings?: Map<string, UserSettingsRecord> };
+const memorySettings = (globalForUserSettings.__memoryUserSettings ??= new Map<string, UserSettingsRecord>());
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);

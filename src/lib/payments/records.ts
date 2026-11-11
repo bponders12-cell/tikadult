@@ -87,10 +87,18 @@ export type TransactionFilter = CreatedAtRange & {
   limit?: number;
 };
 
-const memoryTransactions = new Map<string, TransactionRecord>();
-const memoryEntitlements = new Map<string, EntitlementRecord>();
+// Anchored on globalThis (the same pattern as the Prisma client in src/lib/db.ts): Next.js can
+// instantiate this module separately for route handlers and pages, and a plain module-level store
+// would then be split so that a write from one is invisible to the other.
+const globalForPayments = globalThis as unknown as {
+  __memoryTransactions?: Map<string, TransactionRecord>;
+  __memoryEntitlements?: Map<string, EntitlementRecord>;
+  __memoryPaymentEvents?: Set<string>;
+};
+const memoryTransactions = (globalForPayments.__memoryTransactions ??= new Map<string, TransactionRecord>());
+const memoryEntitlements = (globalForPayments.__memoryEntitlements ??= new Map<string, EntitlementRecord>());
 /** Seen provider events, keyed by eventKey(provider, eventId). */
-const memoryPaymentEvents = new Set<string>();
+const memoryPaymentEvents = (globalForPayments.__memoryPaymentEvents ??= new Set<string>());
 
 /** Test helper: clears the in-memory stores. */
 export function resetMemoryPayments(): void {

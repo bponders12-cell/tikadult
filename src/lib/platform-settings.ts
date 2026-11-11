@@ -10,7 +10,11 @@ import { DEFAULT_CREATOR_SHARE_BPS, isValidCreatorShareBps } from "@/lib/payment
 
 const CREATOR_SHARE_KEY = "creatorShareBps";
 
-const memorySettings = new Map<string, unknown>();
+// Anchored on globalThis (the same pattern as the Prisma client in src/lib/db.ts): Next.js can
+// instantiate this module separately for route handlers and pages, and a plain module-level store
+// would then be split so that a write from one is invisible to the other.
+const globalForPlatformSettings = globalThis as unknown as { __memoryPlatformSettings?: Map<string, unknown> };
+const memorySettings = (globalForPlatformSettings.__memoryPlatformSettings ??= new Map<string, unknown>());
 
 /** Test helper: clears the in-memory store. */
 export function resetMemoryPlatformSettings(): void {
