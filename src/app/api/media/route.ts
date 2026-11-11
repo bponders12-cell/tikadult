@@ -6,6 +6,7 @@ import {
   requireUserId,
   toPublicMedia,
 } from "@/lib/media/api";
+import { checkUploadQuota } from "@/lib/media/quotas";
 import { createMedia, listMediaByOwner } from "@/lib/media/records";
 import { validateInit } from "@/lib/media/validation";
 
@@ -30,6 +31,9 @@ export async function POST(request: Request) {
 
   const v = validateInit(parsed.body);
   if (!v.ok) return jsonError(v.error, v.status);
+
+  const quota = await checkUploadQuota(userId, v.value.sizeBytes);
+  if (!quota.ok) return jsonError(quota.error, quota.status);
 
   let media;
   try {

@@ -345,3 +345,62 @@ export async function deleteMedia(id: string): Promise<boolean> {
   }
   return memoryMedia.delete(id);
 }
+
+// ---- Quota + lifecycle queries ---------------------------------------------
+
+export type StorageUsage = { count: number; bytes: number };
+
+/** Counts/sums every non-removed item (drafts included) for quota checks. `ownerId` omitted = global. */
+export async function getStorageUsage(ownerId?: string): Promise<StorageUsage> {
+  if (dbAvailable()) {
+    const agg = await prisma.media.aggregate({
+      where: { status: { not: "removed" }, ...(ownerId ? { ownerId } : {}) },
+      _count: { _all: true },
+      _sum: { sizeBytes: true },
+    });
+    return { count: agg._count._all, bytes: agg._sum.sizeBytes ?? 0 };
+  }
+  let count = 0;
+  let bytes = 0;
+  for (const m of memoryMedia.values()) {
+    if (m.status === "removed" || (ownerId && m.ownerId !== ownerId)) continue;
+    count++;
+    bytes += m.sizeBytes ?? 0;
+  }
+  return { count, bytes };
+}
+
+/** Records in `status` whose last change (updatedAt) is before `cutoff`, oldest first. */
+export async function listStaleByStatus(status: MediaStatus, cutoff: Date): Promise<MediaRecord[]> {
+  if (dbAvailable()) {
+    const rows = await prisma.media.findMany({
+      where: { status, updatedAt: { lt: cutoff } },
+      orderBy: { updatedAt: "asc" },
+      include,
+    });
+    return rows.map(fromRow);
+  }
+  return [...memoryMedia.values()]
+    .filter((m) => m.status === status && m.updatedAt.getTime() < cutoff.getTime())
+    .sort((a, b) => a.updatedAt.getTime() - b.updatedAt.getTime())
+    .map(clone);
+}
+
+/** Removes the asset rows (not the record) once their stored bytes are gone. */
+export async function clearMediaAssets(mediaId: string): Promise<void> {
+  if (dbAvailable()) {
+    await prisma.mediaAsset.deleteMany({ where: { mediaId } });
+    return;
+  }
+  const current = memoryMedia.get(mediaId);
+  if (current) current.assets = [];
+}
+
+/** Test helper: backdates createdAt/updatedAt of an in-memory record. */
+export function setMemoryTimestamps(id: string, at: Date): void {
+  const m = memoryMedia.get(id);
+  if (m) {
+    m.createdAt = at;
+    m.updatedAt = at;
+  }
+}

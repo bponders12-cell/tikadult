@@ -10,7 +10,10 @@ const mediaCreate = vi.fn();
 vi.mock("@/lib/db", () => ({
   prisma: {
     category: { findUnique: (a: unknown) => categoryFind(a) },
-    media: { create: (a: unknown) => mediaCreate(a) },
+    media: {
+      create: (a: unknown) => mediaCreate(a),
+      aggregate: async () => ({ _count: { _all: 0 }, _sum: { sizeBytes: null } }),
+    },
   },
 }));
 

@@ -132,8 +132,19 @@ export class S3StorageAdapter implements StorageAdapter {
   }
 }
 
-/** Picks the S3 adapter when env-configured, otherwise the local dev adapter. */
+/**
+ * Picks the S3 adapter when env-configured, otherwise the local dev adapter.
+ * In production the local fallback is refused: hosted filesystems are usually
+ * ephemeral, so silently writing uploads to disk would lose creators' media on
+ * the next deploy/restart. Failing loudly at first use beats silent data loss.
+ */
 export function getStorage(env: Env = process.env): StorageAdapter {
   const s3 = s3ConfigFromEnv(env);
-  return s3 ? new S3StorageAdapter(s3) : new LocalStorageAdapter(env.LOCAL_STORAGE_DIR || undefined);
+  if (s3) return new S3StorageAdapter(s3);
+  if (env.NODE_ENV === "production") {
+    throw new Error(
+      "Media storage is not configured for production: set S3_ENDPOINT, S3_BUCKET, S3_ACCESS_KEY_ID and S3_SECRET_ACCESS_KEY (local disk storage is dev-only).",
+    );
+  }
+  return new LocalStorageAdapter(env.LOCAL_STORAGE_DIR || undefined);
 }

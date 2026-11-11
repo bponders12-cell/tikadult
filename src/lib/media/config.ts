@@ -39,3 +39,34 @@ export function mediaTypeForContentType(contentType: string): UploadMediaType | 
   }
   return null;
 }
+
+const GB = 1024 * 1024 * 1024;
+
+function positiveInt(raw: string | undefined, fallback: number): number {
+  const parsed = raw ? Number(raw) : NaN;
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+/** Quota defaults (overridable via env; see docs/ops/cost-and-deploy-notes.md). */
+export const DEFAULT_MAX_ITEMS_PER_USER = 100;
+export const DEFAULT_MAX_BYTES_PER_USER = 2 * GB;
+export const DEFAULT_MAX_TOTAL_BYTES = 50 * GB;
+
+export function quotaLimits(env: Env = process.env) {
+  return {
+    maxItemsPerUser: positiveInt(env.MEDIA_MAX_ITEMS_PER_USER, DEFAULT_MAX_ITEMS_PER_USER),
+    maxBytesPerUser: positiveInt(env.MEDIA_MAX_BYTES_PER_USER, DEFAULT_MAX_BYTES_PER_USER),
+    maxTotalBytes: positiveInt(env.MEDIA_MAX_TOTAL_BYTES, DEFAULT_MAX_TOTAL_BYTES),
+  };
+}
+
+/** Lifecycle defaults: abandoned-draft TTL (hours) and removed-media byte retention (days). */
+export const DEFAULT_DRAFT_TTL_HOURS = 24;
+export const DEFAULT_REMOVED_RETENTION_DAYS = 30;
+
+export function lifecycleWindows(env: Env = process.env) {
+  return {
+    draftTtlMs: positiveInt(env.MEDIA_DRAFT_TTL_HOURS, DEFAULT_DRAFT_TTL_HOURS) * 3600_000,
+    removedRetentionMs: positiveInt(env.MEDIA_REMOVED_RETENTION_DAYS, DEFAULT_REMOVED_RETENTION_DAYS) * 86_400_000,
+  };
+}
