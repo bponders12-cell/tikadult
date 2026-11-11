@@ -10,3 +10,11 @@ describe("requiresAgeGate", () => {
     expect(requiresAgeGate({ ageConfirmed: true }, "/c/new")).toBe(false);
   });
 });
+
+describe("payment webhooks are not age-gated", () => {
+  // The provider calls the webhook server-to-server without the age cookie; a redirect would
+  // drop every delivery. Middleware redirects only when requiresAgeGate() is true.
+  it.each(["/api/webhooks/payments/fake", "/api/payments/fake/simulate"])("%s passes the gate", (path) => {
+    expect(requiresAgeGate({ ageConfirmed: false }, path)).toBe(false);
+  });
+});

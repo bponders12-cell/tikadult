@@ -8,7 +8,7 @@ import { prisma } from "@/lib/db";
  *
  * Money is integer cents. Transaction money columns are BigInt in Postgres; the conversion to
  * `number` happens only in this file, so no BigInt leaves the records layer.
- * Status transitions / atomic settlement are added by a later task.
+ * Status transitions happen only through settlePaymentEvent (one atomic unit per provider event).
  */
 
 export type AccessType = "monthly" | "yearly" | "one_time" | "per_video";
@@ -84,11 +84,14 @@ export type TransactionFilter = {
 
 const memoryTransactions = new Map<string, TransactionRecord>();
 const memoryEntitlements = new Map<string, EntitlementRecord>();
+/** Seen provider events, keyed by eventKey(provider, eventId). */
+const memoryPaymentEvents = new Set<string>();
 
 /** Test helper: clears the in-memory stores. */
 export function resetMemoryPayments(): void {
   memoryTransactions.clear();
   memoryEntitlements.clear();
+  memoryPaymentEvents.clear();
 }
 
 function dbAvailable(): boolean {
@@ -323,4 +326,158 @@ export async function listEntitlementsForUser(userId: string): Promise<Entitleme
     .filter((e) => e.userId === userId)
     .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
     .map(cloneEnt);
+}
+
+// ---- Settlement (verified provider events) ---------------------------------
+
+export type SettlementResult = "applied" | "duplicate" | "ignored" | "unknown_transaction";
+
+/** A verified provider event, as recorded for de-duplication on `(provider, eventId)`. */
+export type SettlementEvent = { provider: string; eventId: string; type: string; providerRef: string };
+
+/**
+ * The transition an event asks for. `from` is the status the transaction must still be in when the
+ * change is written (a guarded conditional update), so concurrent deliveries cannot both apply it.
+ */
+export type SettlementPlan =
+  | { to: "completed"; from: "pending" | "failed"; completedAt: Date; grant: CreateEntitlementInput | null }
+  | { to: "failed"; from: "pending" }
+  | { to: "refunded" | "chargeback"; from: "completed" };
+
+/**
+ * Decides the transition for the transaction as currently stored. `creatorGrants` are the buyer's
+ * creator-scope grants for the transaction's creator (any status), for term stacking.
+ * Returns null when the event asks for a transition the lifecycle does not allow.
+ */
+export type SettlementDecider = (
+  tx: TransactionRecord,
+  creatorGrants: readonly EntitlementRecord[],
+) => SettlementPlan | null;
+
+const eventKey = (provider: string, eventId: string) => JSON.stringify([provider, eventId]);
+
+/** Marker thrown inside the Prisma transaction when the event row already exists. */
+class DuplicatePaymentEvent extends Error {}
+
+/**
+ * Records the event, applies the decided status transition, and grants or revokes — as one unit.
+ * Unknown `(provider, providerRef)`: nothing is recorded (a provider retry can still apply it).
+ * Seen `(provider, eventId)`: "duplicate". Disallowed or already-made transition: "ignored", with the
+ * event recorded as seen. Money columns are never touched.
+ */
+export async function settlePaymentEvent(
+  event: SettlementEvent,
+  decide: SettlementDecider,
+): Promise<SettlementResult> {
+  if (dbAvailable()) return settleWithPrisma(event, decide);
+
+  // In-memory path: no awaits below, so the read-decide-write sequence cannot interleave.
+  const stored = [...memoryTransactions.values()].find(
+    (t) => t.provider === event.provider && t.providerRef === event.providerRef,
+  );
+  if (!stored) return "unknown_transaction";
+  const key = eventKey(event.provider, event.eventId);
+  if (memoryPaymentEvents.has(key)) return "duplicate";
+  memoryPaymentEvents.add(key);
+
+  const grants = [...memoryEntitlements.values()]
+    .filter((e) => e.userId === stored.buyerId && e.scope === "creator" && e.creatorId === stored.creatorId)
+    .map(cloneEnt);
+  const plan = decide(cloneTx(stored), grants);
+  if (!plan || stored.status !== plan.from) return "ignored";
+
+  const now = new Date();
+  if (plan.to === "completed") {
+    stored.completedAt = plan.completedAt;
+    if (plan.grant) {
+      const ent: EntitlementRecord = {
+        id: randomUUID(),
+        userId: plan.grant.userId,
+        scope: plan.grant.scope,
+        creatorId: plan.grant.creatorId ?? null,
+        mediaId: plan.grant.mediaId ?? null,
+        type: plan.grant.type,
+        status: "active",
+        startsAt: plan.grant.startsAt,
+        endsAt: plan.grant.endsAt,
+        createdAt: now,
+        updatedAt: now,
+      };
+      memoryEntitlements.set(ent.id, ent);
+      stored.entitlementId = ent.id;
+    }
+  } else if (plan.from === "completed" && stored.entitlementId) {
+    const ent = memoryEntitlements.get(stored.entitlementId);
+    if (ent) {
+      ent.status = "revoked";
+      ent.updatedAt = now;
+    }
+  }
+  stored.status = plan.to;
+  stored.updatedAt = now;
+  return "applied";
+}
+
+async function settleWithPrisma(event: SettlementEvent, decide: SettlementDecider): Promise<SettlementResult> {
+  try {
+    return await prisma.$transaction(async (db) => {
+      const row = await db.transaction.findUnique({
+        where: { provider_providerRef: { provider: event.provider, providerRef: event.providerRef } },
+      });
+      // Returning without writes commits nothing: a retry after the reference is stored can apply.
+      if (!row) return "unknown_transaction" as const;
+
+      try {
+        await db.paymentEvent.create({
+          data: { provider: event.provider, eventId: event.eventId, type: event.type, transactionId: row.id },
+        });
+      } catch (e) {
+        // The failed INSERT aborts the Postgres transaction, so leave it by throwing (rolls back).
+        if ((e as { code?: string }).code === "P2002") throw new DuplicatePaymentEvent();
+        throw e;
+      }
+
+      const tx = txFromRow(row);
+      const grants =
+        tx.buyerId && tx.creatorId
+          ? (
+              await db.entitlement.findMany({
+                where: { userId: tx.buyerId, scope: "creator", creatorId: tx.creatorId },
+              })
+            ).map(entFromRow)
+          : [];
+      const plan = decide(tx, grants);
+      if (!plan) return "ignored" as const;
+
+      // Guarded transition: only the delivery that still sees `from` wins; a concurrent one blocks on
+      // the row lock, re-checks the WHERE and updates nothing. The event row stays (seen, ignored).
+      const { count } = await db.transaction.updateMany({
+        where: { id: tx.id, status: plan.from },
+        data: { status: plan.to, ...(plan.to === "completed" ? { completedAt: plan.completedAt } : {}) },
+      });
+      if (count !== 1) return "ignored" as const;
+
+      if (plan.to === "completed" && plan.grant) {
+        const ent = await db.entitlement.create({
+          data: {
+            userId: plan.grant.userId,
+            scope: plan.grant.scope,
+            creatorId: plan.grant.creatorId ?? null,
+            mediaId: plan.grant.mediaId ?? null,
+            type: plan.grant.type,
+            status: "active",
+            startsAt: plan.grant.startsAt,
+            endsAt: plan.grant.endsAt,
+          },
+        });
+        await db.transaction.update({ where: { id: tx.id }, data: { entitlementId: ent.id } });
+      } else if (plan.from === "completed" && tx.entitlementId) {
+        await db.entitlement.updateMany({ where: { id: tx.entitlementId }, data: { status: "revoked" } });
+      }
+      return "applied" as const;
+    });
+  } catch (e) {
+    if (e instanceof DuplicatePaymentEvent) return "duplicate";
+    throw e;
+  }
 }
