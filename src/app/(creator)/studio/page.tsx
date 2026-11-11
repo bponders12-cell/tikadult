@@ -2,7 +2,9 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getSession } from "@/lib/auth";
 import { listMediaByOwner } from "@/lib/media/records";
+import { getCreatorPricing } from "@/lib/payments/pricing";
 import StudioList, { type StudioItem } from "@/components/creator/StudioList";
+import CollectionPricingForm from "@/components/payments/CollectionPricingForm";
 import "@/components/creator/creator.css";
 
 export const instant = false;
@@ -22,6 +24,7 @@ export default async function StudioPage() {
     processingError: m.processingError,
     flagReason: m.flagReason,
   }));
+  const pricing = await getCreatorPricing(session.user.id);
 
   return (
     <main className="creator-shell">
@@ -33,6 +36,12 @@ export default async function StudioPage() {
         <h1>My studio</h1>
         <p className="creator-sub">Manage what you have posted.</p>
         <StudioList items={items} />
+        <h2>Private collection pricing</h2>
+        <p className="creator-sub">
+          Let fans unlock all of your private and restricted posts at once. Leave a price empty to not offer
+          that option. Access does not renew automatically.
+        </p>
+        <CollectionPricingForm initial={pricing} />
       </div>
     </main>
   );
