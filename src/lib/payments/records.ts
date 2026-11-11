@@ -76,10 +76,15 @@ export type CreateEntitlementInput = {
   endsAt: Date | null;
 };
 
-export type TransactionFilter = {
+/** A `createdAt` window: `from` inclusive, `to` exclusive; either bound may be omitted. */
+export type CreatedAtRange = { from?: Date; to?: Date };
+
+export type TransactionFilter = CreatedAtRange & {
   status?: TransactionStatus;
   creatorId?: string;
   buyerId?: string;
+  /** Maximum number of rows (newest first). */
+  limit?: number;
 };
 
 const memoryTransactions = new Map<string, TransactionRecord>();
@@ -255,6 +260,22 @@ export async function setTransactionProviderRef(
   return cloneTx(t);
 }
 
+/** Prisma `where` fragment for a createdAt window. */
+function createdAtWhere(range: CreatedAtRange) {
+  if (!range.from && !range.to) return {};
+  return {
+    createdAt: {
+      ...(range.from ? { gte: range.from } : {}),
+      ...(range.to ? { lt: range.to } : {}),
+    },
+  };
+}
+
+function inRange(t: TransactionRecord, range: CreatedAtRange): boolean {
+  const at = t.createdAt.getTime();
+  return (!range.from || at >= range.from.getTime()) && (!range.to || at < range.to.getTime());
+}
+
 /** Newest first. */
 export async function listTransactions(filter: TransactionFilter = {}): Promise<TransactionRecord[]> {
   if (dbAvailable()) {
@@ -263,20 +284,165 @@ export async function listTransactions(filter: TransactionFilter = {}): Promise<
         ...(filter.status ? { status: filter.status } : {}),
         ...(filter.creatorId ? { creatorId: filter.creatorId } : {}),
         ...(filter.buyerId ? { buyerId: filter.buyerId } : {}),
+        ...createdAtWhere(filter),
       },
-      orderBy: { createdAt: "desc" },
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      ...(filter.limit !== undefined ? { take: filter.limit } : {}),
     });
     return rows.map(txFromRow);
   }
-  return [...memoryTransactions.values()]
+  const rows = [...memoryTransactions.values()]
     .filter(
       (t) =>
         (!filter.status || t.status === filter.status) &&
         (!filter.creatorId || t.creatorId === filter.creatorId) &&
-        (!filter.buyerId || t.buyerId === filter.buyerId),
+        (!filter.buyerId || t.buyerId === filter.buyerId) &&
+        inRange(t, filter),
     )
-    .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
-    .map(cloneTx);
+    .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+  return (filter.limit !== undefined ? rows.slice(0, filter.limit) : rows).map(cloneTx);
+}
+
+// ---- Money-flow aggregates (sums of stored columns; never recomputed) -------
+
+const TRANSACTION_STATUSES: readonly TransactionStatus[] = ["pending", "completed", "failed", "refunded", "chargeback"];
+const ACCESS_TYPES: readonly AccessType[] = ["monthly", "yearly", "one_time", "per_video"];
+
+export type MoneySums = { count: number; grossCents: number; platformFeeCents: number; creatorEarningsCents: number };
+
+/** Completed transactions of one creator (null = creator account deleted) in one payout state. */
+export type CreatorPayoutSums = MoneySums & { creatorId: string | null; payoutStatus: PayoutStatus };
+
+const zeroSums = (): MoneySums => ({ count: 0, grossCents: 0, platformFeeCents: 0, creatorEarningsCents: 0 });
+
+function addTo(sums: MoneySums, t: TransactionRecord): void {
+  sums.count += 1;
+  sums.grossCents += t.grossCents;
+  sums.platformFeeCents += t.platformFeeCents;
+  sums.creatorEarningsCents += t.creatorEarningsCents;
+}
+
+type PrismaSumGroup = {
+  _count: { _all: number };
+  _sum: { grossCents: bigint | null; platformFeeCents: bigint | null; creatorEarningsCents: bigint | null };
+};
+
+/** BigInt sums -> numbers (an empty group sums to null). */
+function sumsFromGroup(g: PrismaSumGroup): MoneySums {
+  return {
+    count: g._count._all,
+    grossCents: Number(g._sum.grossCents ?? 0),
+    platformFeeCents: Number(g._sum.platformFeeCents ?? 0),
+    creatorEarningsCents: Number(g._sum.creatorEarningsCents ?? 0),
+  };
+}
+
+const SUM_MONEY = { grossCents: true, platformFeeCents: true, creatorEarningsCents: true } as const;
+
+/** Count and money sums per status (every status present). */
+export async function sumTransactionsByStatus(
+  range: CreatedAtRange = {},
+): Promise<Record<TransactionStatus, MoneySums>> {
+  const out = Object.fromEntries(TRANSACTION_STATUSES.map((s) => [s, zeroSums()])) as Record<
+    TransactionStatus,
+    MoneySums
+  >;
+  if (dbAvailable()) {
+    const groups = await prisma.transaction.groupBy({
+      by: ["status"],
+      where: createdAtWhere(range),
+      _count: { _all: true },
+      _sum: SUM_MONEY,
+    });
+    for (const g of groups) out[g.status as TransactionStatus] = sumsFromGroup(g);
+    return out;
+  }
+  for (const t of memoryTransactions.values()) if (inRange(t, range)) addTo(out[t.status], t);
+  return out;
+}
+
+/** Count and money sums of completed transactions per access type (every type present). */
+export async function sumCompletedByAccessType(
+  range: CreatedAtRange = {},
+): Promise<Record<AccessType, MoneySums>> {
+  const out = Object.fromEntries(ACCESS_TYPES.map((a) => [a, zeroSums()])) as Record<AccessType, MoneySums>;
+  if (dbAvailable()) {
+    const groups = await prisma.transaction.groupBy({
+      by: ["accessType"],
+      where: { status: "completed", ...createdAtWhere(range) },
+      _count: { _all: true },
+      _sum: SUM_MONEY,
+    });
+    for (const g of groups) out[g.accessType as AccessType] = sumsFromGroup(g);
+    return out;
+  }
+  for (const t of memoryTransactions.values()) {
+    if (t.status === "completed" && inRange(t, range)) addTo(out[t.accessType], t);
+  }
+  return out;
+}
+
+/** Completed transactions grouped by (creatorId, payoutStatus); groups with no rows are omitted. */
+export async function sumCompletedByCreatorAndPayout(range: CreatedAtRange = {}): Promise<CreatorPayoutSums[]> {
+  if (dbAvailable()) {
+    const groups = await prisma.transaction.groupBy({
+      by: ["creatorId", "payoutStatus"],
+      where: { status: "completed", ...createdAtWhere(range) },
+      _count: { _all: true },
+      _sum: SUM_MONEY,
+    });
+    return groups.map((g) => ({
+      creatorId: g.creatorId,
+      payoutStatus: g.payoutStatus as PayoutStatus,
+      ...sumsFromGroup(g),
+    }));
+  }
+  const groups = new Map<string, CreatorPayoutSums>();
+  for (const t of memoryTransactions.values()) {
+    if (t.status !== "completed" || !inRange(t, range)) continue;
+    const key = JSON.stringify([t.creatorId, t.payoutStatus]);
+    let g = groups.get(key);
+    if (!g) {
+      g = { creatorId: t.creatorId, payoutStatus: t.payoutStatus, ...zeroSums() };
+      groups.set(key, g);
+    }
+    addTo(g, t);
+  }
+  return [...groups.values()];
+}
+
+// ---- Payouts (admin action) -------------------------------------------------
+
+export type PayoutMarkResult = { markedCount: number; paidCents: number };
+
+/**
+ * Marks all of one creator's `completed` + `unpaid` transactions `paid` (paidOutAt = now) and reports
+ * the creator earnings so marked. Records bookkeeping only: no money moves. Repeating marks nothing.
+ */
+export async function markCreatorPayoutsPaid(creatorId: string, now: Date = new Date()): Promise<PayoutMarkResult> {
+  if (dbAvailable()) {
+    // One UPDATE ... RETURNING: the rows counted are exactly the rows changed, even under concurrency.
+    const rows = await prisma.transaction.updateManyAndReturn({
+      where: { creatorId, status: "completed", payoutStatus: "unpaid" },
+      data: { payoutStatus: "paid", paidOutAt: now },
+      select: { creatorEarningsCents: true },
+    });
+    return {
+      markedCount: rows.length,
+      paidCents: rows.reduce((sum, r) => sum + Number(r.creatorEarningsCents), 0),
+    };
+  }
+  let markedCount = 0;
+  let paidCents = 0;
+  for (const t of memoryTransactions.values()) {
+    if (t.creatorId !== creatorId || t.status !== "completed" || t.payoutStatus !== "unpaid") continue;
+    t.payoutStatus = "paid";
+    t.paidOutAt = new Date(now);
+    t.updatedAt = new Date(now);
+    markedCount += 1;
+    paidCents += t.creatorEarningsCents;
+  }
+  return { markedCount, paidCents };
 }
 
 // ---- Entitlements ---------------------------------------------------------
