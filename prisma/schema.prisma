@@ -165,6 +165,7 @@ model Media {
 
   @@index([ownerId])
   @@index([status, visibility])
+  @@index([categoryId, status])
 }
 
 /// A stored file for a Media: original upload, web-optimised variant, or thumbnail.

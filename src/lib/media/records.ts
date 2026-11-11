@@ -223,6 +223,47 @@ export async function listMediaByOwner(ownerId: string): Promise<MediaRecord[]> 
     .map(clone);
 }
 
+const LIVE_PUBLIC = { status: "live", visibility: "public" } as const;
+const isLivePublic = (m: MediaRecord) => m.status === "live" && m.visibility === "public";
+const newestPublished = (a: MediaRecord, b: MediaRecord) =>
+  (b.publishedAt ?? b.createdAt).getTime() - (a.publishedAt ?? a.createdAt).getTime();
+
+/** Live + public items in a category, newest published first. */
+export async function listLiveByCategory(categorySlug: string, limit = 50): Promise<MediaRecord[]> {
+  if (dbAvailable()) {
+    const rows = await prisma.media.findMany({
+      where: { ...LIVE_PUBLIC, category: { slug: categorySlug } },
+      orderBy: [{ publishedAt: "desc" }, { createdAt: "desc" }],
+      take: limit,
+      include,
+    });
+    return rows.map(fromRow);
+  }
+  return [...memoryMedia.values()]
+    .filter((m) => isLivePublic(m) && m.categorySlug === categorySlug)
+    .sort(newestPublished)
+    .slice(0, limit)
+    .map(clone);
+}
+
+/** Live + public items by owner, newest published first. */
+export async function listLiveByOwner(ownerId: string, limit = 50): Promise<MediaRecord[]> {
+  if (dbAvailable()) {
+    const rows = await prisma.media.findMany({
+      where: { ...LIVE_PUBLIC, ownerId },
+      orderBy: [{ publishedAt: "desc" }, { createdAt: "desc" }],
+      take: limit,
+      include,
+    });
+    return rows.map(fromRow);
+  }
+  return [...memoryMedia.values()]
+    .filter((m) => isLivePublic(m) && m.ownerId === ownerId)
+    .sort(newestPublished)
+    .slice(0, limit)
+    .map(clone);
+}
+
 /** Records awaiting processing (status=processing, processingStatus=pending), oldest first. */
 export async function listPendingMedia(): Promise<MediaRecord[]> {
   if (dbAvailable()) {

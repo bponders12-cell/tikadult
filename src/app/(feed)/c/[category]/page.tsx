@@ -2,7 +2,7 @@ import Link from "next/link";
 import SwipeFeed from "@/components/feed/SwipeFeed";
 
 export const instant = false;
-import { getPlaceholderSlides } from "@/components/feed/feed-data";
+import { buildFeedItems } from "@/lib/media/feed";
 import { prisma } from "@/lib/db";
 import { getDefaultCategories } from "@/lib/categories";
 import { getSession } from "@/lib/auth";
@@ -38,7 +38,7 @@ export default async function CategoryFeedPage({ params, searchParams }: Params)
     : resolveFeedLayout(undefined);
   const layoutParam = Array.isArray(sp.layout) ? sp.layout[0] : sp.layout;
   const initialLayout = resolveFeedLayout(layoutParam ?? baseLayout);
-  const items = getPlaceholderSlides(slug);
+  const items = await buildFeedItems(slug);
 
   if (!cat) {
     return (
