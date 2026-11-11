@@ -223,6 +223,22 @@ export async function listMediaByOwner(ownerId: string): Promise<MediaRecord[]> 
     .map(clone);
 }
 
+/** Records awaiting processing (status=processing, processingStatus=pending), oldest first. */
+export async function listPendingMedia(): Promise<MediaRecord[]> {
+  if (dbAvailable()) {
+    const rows = await prisma.media.findMany({
+      where: { status: "processing", processingStatus: "pending" },
+      orderBy: { createdAt: "asc" },
+      include,
+    });
+    return rows.map(fromRow);
+  }
+  return [...memoryMedia.values()]
+    .filter((m) => m.status === "processing" && m.processingStatus === "pending")
+    .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
+    .map(clone);
+}
+
 export async function updateMedia(id: string, patch: UpdateMediaPatch): Promise<MediaRecord | null> {
   if (dbAvailable()) {
     const { categorySlug, ...rest } = patch;
