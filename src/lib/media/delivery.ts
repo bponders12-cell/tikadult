@@ -11,9 +11,13 @@ export const isDeliverableKind = (k: string): k is DeliverableKind =>
 export const isPubliclyVisible = (m: Pick<MediaRecord, "status" | "visibility">): boolean =>
   m.status === "live" && m.visibility === "public";
 
-/** Anonymous/other callers: public+live only. Owners: their own items in any state. */
-export const canFetchAsset = (m: MediaRecord, userId: string | null): boolean =>
-  isPubliclyVisible(m) || (userId !== null && m.ownerId === userId);
+/**
+ * Access rule: live+public for anyone; owners see their own items in any state; anyone else only
+ * a live item they are `entitled` to (a valid matching grant, computed by the caller via
+ * hasMediaAccess). Thumbnails follow the same rule.
+ */
+export const canFetchAsset = (m: MediaRecord, userId: string | null, entitled = false): boolean =>
+  isPubliclyVisible(m) || (userId !== null && m.ownerId === userId) || (entitled && m.status === "live");
 
 export type RangeResult =
   | { kind: "none" }

@@ -3,6 +3,7 @@ import { getSession } from "@/lib/auth";
 import { canFetchAsset, isDeliverableKind, isPubliclyVisible, parseRange } from "@/lib/media/delivery";
 import { getMedia } from "@/lib/media/records";
 import { getStorage } from "@/lib/media/storage";
+import { hasMediaAccess } from "@/lib/payments/entitlements";
 
 type Ctx = { params: Promise<{ id: string; kind: string }> };
 
@@ -23,7 +24,10 @@ export async function GET(request: Request, { params }: Ctx) {
   const userId = (await getSession())?.user?.id ?? null;
   // 18+ gate: adult bytes need the age-confirmation cookie or a signed-in session.
   if (!userId && !isAgeConfirmedFromCookieHeader(request.headers.get("cookie"))) return notFound();
-  if (!canFetchAsset(media, userId)) return notFound();
+  // Grants are looked up only when they could matter: signed in, not the owner, not public.
+  const entitled =
+    userId !== null && media.ownerId !== userId && !isPubliclyVisible(media) && (await hasMediaAccess(userId, media));
+  if (!canFetchAsset(media, userId, entitled)) return notFound();
 
   const asset = media.assets.find((a) => a.kind === kind);
   if (!asset) return notFound();

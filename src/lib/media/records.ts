@@ -264,6 +264,27 @@ export async function listLiveByOwner(ownerId: string, limit = 50): Promise<Medi
     .map(clone);
 }
 
+/**
+ * The owner's private collection: live items with visibility private or restricted (treated alike),
+ * newest published first. Callers decide per viewer which of them are unlocked.
+ */
+export async function listLiveNonPublicByOwner(ownerId: string, limit = 100): Promise<MediaRecord[]> {
+  if (dbAvailable()) {
+    const rows = await prisma.media.findMany({
+      where: { ownerId, status: "live", visibility: { in: ["private", "restricted"] } },
+      orderBy: [{ publishedAt: "desc" }, { createdAt: "desc" }],
+      take: limit,
+      include,
+    });
+    return rows.map(fromRow);
+  }
+  return [...memoryMedia.values()]
+    .filter((m) => m.ownerId === ownerId && m.status === "live" && m.visibility !== "public")
+    .sort(newestPublished)
+    .slice(0, limit)
+    .map(clone);
+}
+
 /** Records awaiting processing (status=processing, processingStatus=pending), oldest first. */
 export async function listPendingMedia(): Promise<MediaRecord[]> {
   if (dbAvailable()) {
