@@ -26,5 +26,7 @@ export function middleware(request: NextRequest) {
 
 export const config = {
   // Run on app routes; static assets/files are also filtered in-code for safety.
-  matcher: ["/((?!_next/static|_next/image).*)"],
+  // /api/media is excluded: middleware buffers request bodies (10MB default), which
+  // would truncate large uploads. Those routes enforce their own auth.
+  matcher: ["/((?!_next/static|_next/image|api/media).*)"],
 };
