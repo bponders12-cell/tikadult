@@ -1,5 +1,6 @@
 import { mkdir, readFile, rm, stat, writeFile } from "fs/promises";
 import path from "path";
+import { signRequest } from "./s3-signing";
 
 export type PutOptions = { contentType?: string };
 
@@ -104,31 +105,64 @@ export function s3ConfigFromEnv(env: Env = process.env): S3Config | null {
 }
 
 /**
- * S3-compatible adapter contract. Intentionally a stub: no AWS SDK dependency
- * is added yet; a later task fills these in (SigV4 over fetch or an SDK).
+ * S3-compatible adapter over fetch with SigV4 signing (path-style addressing).
  */
 export class S3StorageAdapter implements StorageAdapter {
   constructor(readonly config: S3Config) {}
 
-  private notImplemented(op: string): never {
-    throw new Error(`S3StorageAdapter.${op} not implemented`);
+  private objectUrl(key: string): string {
+    assertSafeKey(key);
+    const base = this.config.endpoint.replace(/\/+$/, "");
+    const bucket = encodeURIComponent(this.config.bucket);
+    const keyPath = key.split("/").map((s) => encodeURIComponent(s)).join("/");
+    return `${base}/${bucket}/${keyPath}`;
   }
 
-  async put(key: string): Promise<void> {
-    assertSafeKey(key);
-    this.notImplemented("put");
+  private async signedFetch(method: string, key: string, body?: Uint8Array, contentType?: string): Promise<Response> {
+    const url = this.objectUrl(key);
+    const headers: Record<string, string> = {};
+    if (contentType) headers["content-type"] = contentType;
+    const signed = signRequest({
+      method,
+      url,
+      headers,
+      body,
+      accessKeyId: this.config.accessKeyId,
+      secretAccessKey: this.config.secretAccessKey,
+      region: this.config.region || "auto",
+      service: "s3",
+    });
+    return fetch(url, { method, headers: signed.headers, body: body as BodyInit | undefined });
   }
+
+  async put(key: string, data: Uint8Array, opts?: PutOptions): Promise<void> {
+    const res = await this.signedFetch("PUT", key, data, opts?.contentType);
+    if (!res.ok) {
+      throw new Error(`S3 put failed (${res.status}) for ${key}`);
+    }
+  }
+
   async get(key: string): Promise<Buffer | null> {
-    assertSafeKey(key);
-    return this.notImplemented("get");
+    const res = await this.signedFetch("GET", key);
+    if (res.status === 404) return null;
+    if (!res.ok) {
+      throw new Error(`S3 get failed (${res.status}) for ${key}`);
+    }
+    const ab = await res.arrayBuffer();
+    return Buffer.from(ab);
   }
+
   async exists(key: string): Promise<boolean> {
-    assertSafeKey(key);
-    return this.notImplemented("exists");
+    const res = await this.signedFetch("HEAD", key);
+    if (res.status === 200) return true;
+    if (res.status === 404) return false;
+    throw new Error(`S3 head failed (${res.status}) for ${key}`);
   }
+
   async delete(key: string): Promise<void> {
-    assertSafeKey(key);
-    this.notImplemented("delete");
+    const res = await this.signedFetch("DELETE", key);
+    if (res.status === 404 || res.ok) return;
+    throw new Error(`S3 delete failed (${res.status}) for ${key}`);
   }
 }
 
