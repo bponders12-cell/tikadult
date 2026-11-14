@@ -1,0 +1,17 @@
+{$SITE_DOMAIN} {
+	tls {$ACME_EMAIL}
+	basic_auth {
+		{$BASIC_AUTH_USER} {$BASIC_AUTH_HASH}
+	}
+	encode zstd gzip
+	reverse_proxy app:3000
+}
+
+# Local testing without a public domain (example): use this block instead of the site above.
+# :80 {
+#   basic_auth {
+#     {$BASIC_AUTH_USER} {$BASIC_AUTH_HASH}
+#   }
+#   reverse_proxy app:3000
+# }
+# For localhost with Caddy's internal CA: replace :80 with localhost and add `tls internal`.
