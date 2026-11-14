@@ -30,6 +30,16 @@
 - **Licensing/activation (packaging plan):** owner-operated license service reliability/cost, activation grace/outage policy, one-site binding and site-move flow, and license terms/packaging.
 - **Provider/infra selection:** confirm costed choices for DB, storage/CDN, hosting, and any managed services fit ~$100/month early target at expected scale.
 
+## Deployment (Docker install)
+
+Self-contained Docker Compose demo stack and runbook: see [`install.md`](install.md). It covers prerequisites (VM, Docker, ports 80/443, DNS), `.env` config (including `NEXTAUTH_SECRET` and `caddy hash-password` generation), launch (`./install.sh` / `install.ps1`), verification (Basic Auth gate, admin login, upload round-trip/playback, health), operations (logs, restart, volume backups), and the one-env-var switch to managed Postgres/S3.
+
+**Resolved (previous launch blockers):**
+- **S3 adapter:** implemented (`src/lib/media/storage.ts` + `src/lib/media/s3-signing.ts`, SigV4 via `node:crypto`, path-style; serves MinIO and AWS S3 via env). Media bytes are streamed by the app (`GET /api/media/[id]/asset/[kind]`) with Range support, so object storage can remain internal.
+- **Migrations:** initial migration committed under `prisma/migrations/` (`20261114082823_init`); applies via `prisma migrate deploy` (idempotent startup). Real-Postgres verification was run locally (throwaway Postgres: migrate deploy + seed idempotency + core flows incl. settlement/report/payout) with no BigInt/enum/cast leaks found; in-memory unit paths remain green.
+
+**Owner-executed / still required on the host:** provisioning, DNS, firewall/ports 80/443, real Let's Encrypt issuance, managed RDS/S3 if chosen, and end-to-end confirmation on the live domain. Provider-backed payments remain intentionally inert (fake provider).
+
 ## Media pipeline (Plan 2)
 
 ### Cost drivers
@@ -64,8 +74,8 @@ Only web-safe formats are allowed (mp4/webm video, jpg/png/webp images) so the o
 - **CDN/object delivery:** the asset route and the `upload` descriptor returned by `POST /api/media` (replace with presigned URLs / CDN origin).
 
 ### Launch-validation TODOs (media)
-- **Migrations:** no database exists in dev, so migration SQL has not been generated; run `prisma migrate dev` against a real PostgreSQL before launch and review the media/asset tables. `Media.sizeBytes` is `BigInt` (so site-wide `SUM` quota aggregates cannot overflow 32 bits); the records layer converts to `number`.
-- **S3 adapter:** `S3StorageAdapter` is a contract stub; implement (SigV4 over fetch or SDK) and test against the chosen provider before production, since production now refuses local storage.
+- **Migrations:** initial migration is committed (`prisma/migrations/20261114082823_init`) and applied via `prisma migrate deploy` (startup). Real-Postgres verification was done locally (throwaway Postgres). Review/run against the target production database and confirm on the host before launch. `Media.sizeBytes` is `BigInt` (so site-wide `SUM` quota aggregates cannot overflow 32 bits); the records layer converts to `number`.
+- **S3 adapter:** implemented (`src/lib/media/storage.ts` + `src/lib/media/s3-signing.ts`, node:crypto SigV4, path-style; MinIO/AWS S3 via env). Local MinIO round-trip/compose media playback should be confirmed on the target host (see `install.md`); production refuses local-disk fallback when S3 is not configured.
 - **CDN:** choose and front delivery with a CDN (cache public+live assets, honor Range); measure egress per active viewer to validate the $100/month budget.
 - **Scheduling:** schedule `runMediaCleanup` and `runPendingMedia`; add spend/usage alerting and admin visibility of the global-ceiling warning (later plans).
 
@@ -167,9 +177,8 @@ Since no real provider exists yet, **payments are off in any production deploy**
 
 ### Launch-validation TODOs (payments)
 - **Migrations:**
-  - No migration has been generated for the payment tables.
-  - The Prisma code paths are type-checked only and have **not run against PostgreSQL**. This covers settlement transactions, `groupBy` reports, `updateManyAndReturn` payout marking and the date filters.
-  - Generate and review the migration, then run the payment unit flows against a real database.
+  - Initial migration is committed (`prisma/migrations/20261114082823_init`) and applied via `prisma migrate deploy` (startup). Real-Postgres verification was run locally for core payment/media flows (transaction/settle/report/payout paths exercised without BigInt/enum/cast leaks in that pass); review and run full payment flows against the target production database before launch.
+  - Prisma settlement/aggregate paths beyond that pass should continue to be validated on real Postgres in staging/host as needed.
 - **No real provider:** an adapter must be built (see "Adding a real provider" in the eligibility doc) after a provider approves an application.
 - **The fake provider is dev-only:** no money moves, and it is refused in production.
 - **E2E:** `tests/e2e/purchase.spec.ts` is written but **failed** in this environment.
